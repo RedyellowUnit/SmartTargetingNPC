@@ -1,4 +1,5 @@
 #include "hook.h"
+#include "threat.h"
 #include "RE/A/Actor.h"
 #include "RE/C/CombatGroup.h"
 #include "RE/C/CombatController.h"
@@ -7,14 +8,26 @@ namespace Hook {
     class ActorHook {
     public:
         static void Install() {
-            // Hook Character VTABLE (covers most NPCs)
             REL::Relocation<std::uintptr_t> characterVtable{ RE::VTABLE_Character[0] };
+            
+            // Hook UpdateCombat (0xE4)
             _UpdateCombat = characterVtable.write_vfunc(0xE4, UpdateCombat);
             
-            SKSE::log::info("Hooked Actor::UpdateCombat for Character");
+            // Hook HandleHealthDamage (0x104)
+            _HandleHealthDamage = characterVtable.write_vfunc(0x104, HandleHealthDamage);
+            
+            SKSE::log::info("Hooked Actor::UpdateCombat and Actor::HandleHealthDamage");
         }
 
     private:
+        static void HandleHealthDamage(RE::Actor* a_this, RE::Actor* a_attacker, float a_damage) {
+            _HandleHealthDamage(a_this, a_attacker, a_damage);
+
+            if (a_this && a_attacker && a_damage > 0.0f) {
+                Threat::ThreatManager::GetSingleton()->AddDamage(a_this->GetFormID(), a_attacker->GetFormID(), a_damage);
+            }
+        }
+
         static void UpdateCombat(RE::Actor* a_this) {
             _UpdateCombat(a_this);
 
@@ -30,12 +43,16 @@ namespace Hook {
             auto& runtimeData = a_this->GetActorRuntimeData();
             auto currentTarget = runtimeData.currentCombatTarget.get();
             
+            float currentDPS = 0.0f;
             float currentDistance = 1000000.0f;
+            
             if (currentTarget) {
+                currentDPS = Threat::ThreatManager::GetSingleton()->GetDPS(a_this->GetFormID(), currentTarget->GetFormID());
                 currentDistance = a_this->GetPosition().GetDistance(currentTarget->GetPosition());
             }
 
-            RE::NiPointer<RE::Actor> closestTarget = nullptr;
+            RE::NiPointer<RE::Actor> bestTarget = nullptr;
+            float bestDPS = 0.0f;
             float minDistance = 1000000.0f;
 
             {
@@ -43,51 +60,73 @@ namespace Hook {
                 for (auto& combatTarget : combatGroup->targets) {
                     auto targetHandle = combatTarget.targetHandle;
                     auto target = targetHandle.get();
-                    if (!target || target->IsDead()) {
+                    if (!target || target->IsDead() || combatTarget.detectLevel <= 0) {
                         continue;
                     }
 
-                    // Only consider targets that the NPC has actually detected
-                    if (combatTarget.detectLevel <= 0) {
-                        continue;
-                    }
-
+                    float dps = Threat::ThreatManager::GetSingleton()->GetDPS(a_this->GetFormID(), target->GetFormID());
                     float dist = a_this->GetPosition().GetDistance(target->GetPosition());
-                    if (dist < minDistance) {
+
+                    // Selection Logic:
+                    // 1. Higher DPS wins.
+                    // 2. If DPS is close (difference < 1.0 or < 10%), closer distance wins.
+                    
+                    bool isBetter = false;
+                    if (!bestTarget) {
+                        isBetter = true;
+                    } else {
+                        float dpsDiff = dps - bestDPS;
+                        if (dpsDiff > 1.0f || (bestDPS > 0 && dpsDiff / bestDPS > 0.1f)) {
+                            // Significantly higher DPS
+                            isBetter = true;
+                        } else if (std::abs(dpsDiff) < 1.0f || (bestDPS > 0 && std::abs(dpsDiff / bestDPS) < 0.1f)) {
+                            // DPS is similar, compare distance
+                            if (dist < minDistance) {
+                                isBetter = true;
+                            }
+                        }
+                    }
+
+                    if (isBetter) {
+                        bestTarget = target;
+                        bestDPS = dps;
                         minDistance = dist;
-                        closestTarget = target;
                     }
                 }
             }
 
-            if (closestTarget && closestTarget.get() != currentTarget.get()) {
-                // Threshold: Only switch if the new target is at least 15% closer than the current one
-                // or if we have no current target.
+            if (bestTarget && bestTarget.get() != currentTarget.get()) {
+                // Threshold to switch:
+                // Only switch if the best target is significantly better than current.
                 bool shouldSwitch = false;
-                if (!currentTarget) {
+                
+                float dpsDiff = bestDPS - currentDPS;
+                if (dpsDiff > 1.0f || (currentDPS > 0 && dpsDiff / currentDPS > 0.15f)) {
                     shouldSwitch = true;
-                } else {
-                    float threshold = currentDistance * 0.85f; // 15% closer
-                    if (minDistance < threshold) {
+                } else if (std::abs(dpsDiff) < 1.0f || (currentDPS > 0 && std::abs(dpsDiff / currentDPS) < 0.15f)) {
+                    // Similar DPS, check if distance is much better
+                    if (minDistance < currentDistance * 0.85f) {
                         shouldSwitch = true;
                     }
                 }
 
                 if (shouldSwitch) {
-                    runtimeData.currentCombatTarget = closestTarget->GetHandle();
+                    runtimeData.currentCombatTarget = bestTarget->GetHandle();
                     
                     if (runtimeData.combatController) {
-                        runtimeData.combatController->targetHandle = closestTarget->GetHandle();
+                        runtimeData.combatController->targetHandle = bestTarget->GetHandle();
                         runtimeData.combatController->previousTargetHandle = currentTarget ? currentTarget->GetHandle() : RE::ActorHandle();
                     }
-                    
-                    // Optional: Notify the AI to re-evaluate its current path/action
-                    // a_this->EvaluatePackage(false, false);
                 }
             }
+            
+            // Periodic cleanup of threat data (could be done here or in a separate timer)
+            // For now, just call it occasionally or every update (it has its own internal timing)
+            // Threat::ThreatManager::GetSingleton()->Cleanup();
         }
 
         static inline REL::Relocation<decltype(UpdateCombat)> _UpdateCombat;
+        static inline REL::Relocation<decltype(HandleHealthDamage)> _HandleHealthDamage;
     };
 
     void Install() {
