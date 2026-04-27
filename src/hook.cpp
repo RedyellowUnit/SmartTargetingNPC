@@ -96,8 +96,8 @@ namespace Hook {
             float damage;
             if (HitTracker::GetSingleton()->GetAndClearDamage(a_this->GetFormID(), currentHealth, attackerID, damage)) {
                 if (damage > 0.0f) {
-                    SKSE::log::info(FMT_STRING("[Damage] Victim={:X}, Attacker={:X}, Amount={:.1f}"), 
-                        a_this->GetFormID(), attackerID, damage);
+                    /*SKSE::log::info(FMT_STRING("[Damage] Victim={:X}, Attacker={:X}, Amount={:.1f}"),
+                        a_this->GetFormID(), attackerID, damage);*/
                     
                     Threat::ThreatManager::GetSingleton()->AddDamage(a_this->GetFormID(), attackerID, damage);
                 }
@@ -128,47 +128,54 @@ namespace Hook {
             float bestDPS = 0.0f;
             float minDistance = 1000000.0f;
 
-            {
-                RE::BSReadLockGuard lock(combatGroup->lock);
-                for (auto& combatTarget : combatGroup->targets) {
-                    auto targetHandle = combatTarget.targetHandle;
-                    auto target = targetHandle.get();
-                    if (!target || target->IsDead() || combatTarget.detectLevel <= 0) {
-                        continue;
-                    }
+            RE::BSReadLockGuard lock(combatGroup->lock);
+            for (auto& combatTarget : combatGroup->targets) {
+                auto targetHandle = combatTarget.targetHandle;
+                auto target = targetHandle.get();
+                if (!target || target->IsDead() || combatTarget.detectLevel <= 0) {
+                    continue;
+                }
 
-                    float dps = Threat::ThreatManager::GetSingleton()->GetDPS(a_this->GetFormID(), target->GetFormID());
-                    float dist = a_this->GetPosition().GetDistance(target->GetPosition());
+                float dps = Threat::ThreatManager::GetSingleton()->GetDPS(a_this->GetFormID(), target->GetFormID());
+                float dist = a_this->GetPosition().GetDistance(target->GetPosition());
 
-                    bool isBetter = false;
-                    if (!bestTarget) {
+                // Selection Logic:
+                // 1. Higher DPS wins.
+                // 2. If DPS is close (difference < 1.0 or < 10%), closer distance wins.
+                
+                bool isBetter = false;
+                if (!bestTarget) {
+                    isBetter = true;
+                } else {
+                    float dpsDiff = dps - bestDPS;
+                    if (dpsDiff > 1.0f || (bestDPS > 0 && dpsDiff / bestDPS > 0.1f)) {
+                        // Significantly higher DPS
                         isBetter = true;
-                    } else {
-                        float dpsDiff = dps - bestDPS;
-                        if (dpsDiff > 1.0f || (bestDPS > 0 && dpsDiff / bestDPS > 0.1f)) {
+                    } else if (std::abs(dpsDiff) < 1.0f || (bestDPS > 0 && std::abs(dpsDiff / bestDPS) < 0.1f)) {
+                        // DPS is similar, compare distance
+                        if (dist < minDistance) {
                             isBetter = true;
-                        } else if (std::abs(dpsDiff) < 1.0f || (bestDPS > 0 && std::abs(dpsDiff / bestDPS) < 0.1f)) {
-                            if (dist < minDistance) {
-                                isBetter = true;
-                            }
                         }
                     }
+                }
 
-                    if (isBetter) {
-                        bestTarget = target;
-                        bestDPS = dps;
-                        minDistance = dist;
-                    }
+                if (isBetter) {
+                    bestTarget = target;
+                    bestDPS = dps;
+                    minDistance = dist;
                 }
             }
 
             if (bestTarget && bestTarget.get() != currentTarget.get()) {
+                // Threshold to switch:
+                // Only switch if the best target is significantly better than current.
                 bool shouldSwitch = false;
                 
                 float dpsDiff = bestDPS - currentDPS;
                 if (dpsDiff > 1.0f || (currentDPS > 0 && dpsDiff / currentDPS > 0.15f)) {
                     shouldSwitch = true;
                 } else if (std::abs(dpsDiff) < 1.0f || (currentDPS > 0 && std::abs(dpsDiff / currentDPS) < 0.15f)) {
+                    // Similar DPS, check if distance is much better
                     if (minDistance < currentDistance * 0.85f) {
                         shouldSwitch = true;
                     }
@@ -182,8 +189,8 @@ namespace Hook {
                         runtimeData.combatController->previousTargetHandle = currentTarget ? currentTarget->GetHandle() : RE::ActorHandle();
                     }
 
-                    SKSE::log::info(FMT_STRING("[TargetSwitch] {:X} switched target to {:X} (DPS: {:.1f}, Dist: {:.0f})"), 
-                        a_this->GetFormID(), bestTarget->GetFormID(), bestDPS, minDistance);
+                    /*SKSE::log::info(FMT_STRING("[TargetSwitch] {:X} switched target to {:X} (DPS: {:.1f}, Dist: {:.0f})"),
+                        a_this->GetFormID(), bestTarget->GetFormID(), bestDPS, minDistance);*/
                 }
             }
         }
