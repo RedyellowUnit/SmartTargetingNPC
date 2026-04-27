@@ -1,4 +1,5 @@
 #include "threat.h"
+#include <chrono>
 
 namespace Threat {
     void ThreatManager::AddDamage(RE::FormID a_targetID, RE::FormID a_attackerID, float a_damage) {
@@ -9,11 +10,8 @@ namespace Threat {
         auto& attackerMap = _data[a_targetID];
         auto& history = attackerMap[a_attackerID];
         
-        float currentTime = static_cast<float>(RE::Calendar::GetSingleton()->GetHoursPassed());
-        // Convert hours to seconds for easier window management (roughly)
-        // Actually, let's use a more high-resolution timer if possible, but Calendar is stable for engine time.
-        // Better: use GetHoursPassed() * 3600.0f
-        float currentTimeSec = currentTime * 3600.0f;
+        auto now = std::chrono::steady_clock::now();
+        float currentTimeSec = std::chrono::duration<float>(now.time_since_epoch()).count();
 
         history.push_back({ currentTimeSec, a_damage });
     }
@@ -26,7 +24,8 @@ namespace Threat {
         }
 
         auto& history = _data[a_targetID][a_attackerID];
-        float currentTimeSec = static_cast<float>(RE::Calendar::GetSingleton()->GetHoursPassed()) * 3600.0f;
+        auto now = std::chrono::steady_clock::now();
+        float currentTimeSec = std::chrono::duration<float>(now.time_since_epoch()).count();
         float windowStart = currentTimeSec - _windowSeconds;
 
         // Remove old records
@@ -47,7 +46,8 @@ namespace Threat {
     void ThreatManager::Cleanup() {
         std::lock_guard<std::mutex> lock(_mutex);
         
-        float currentTimeSec = static_cast<float>(RE::Calendar::GetSingleton()->GetHoursPassed()) * 3600.0f;
+        auto now = std::chrono::steady_clock::now();
+        float currentTimeSec = std::chrono::duration<float>(now.time_since_epoch()).count();
         float windowStart = currentTimeSec - _windowSeconds;
 
         for (auto itTarget = _data.begin(); itTarget != _data.end();) {

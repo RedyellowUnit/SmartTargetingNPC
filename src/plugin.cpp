@@ -5,6 +5,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
 {
 	switch (a_msg->type) {
 	case SKSE::MessagingInterface::kDataLoaded:
+		Hook::RegisterEvents();
 		break;
 	case SKSE::MessagingInterface::kPostLoad:
 		break;
