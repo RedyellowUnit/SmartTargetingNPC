@@ -23,6 +23,7 @@ SKSEPluginLoad(const SKSE::LoadInterface* skse)
 	SKSE::Init(skse);
 	SetupLog();
 
+	SKSE::AllocTrampoline(64);
 	Hook::Install();
 
 	auto messaging = SKSE::GetMessagingInterface();

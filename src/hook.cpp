@@ -72,6 +72,72 @@ namespace Hook {
         }
     };
 
+    class FocusManager {
+    public:
+        static FocusManager* GetSingleton() {
+            static FocusManager singleton;
+            return &singleton;
+        }
+
+        void SetFocus(RE::FormID a_observer, RE::FormID a_target) {
+            std::lock_guard<std::mutex> lock(_mutex);
+            _focusMap[a_observer] = a_target;
+        }
+
+        RE::FormID GetFocus(RE::FormID a_observer) {
+            std::lock_guard<std::mutex> lock(_mutex);
+            auto it = _focusMap.find(a_observer);
+            return (it != _focusMap.end()) ? it->second : 0;
+        }
+
+        void ClearFocus(RE::FormID a_observer) {
+            std::lock_guard<std::mutex> lock(_mutex);
+            _focusMap.erase(a_observer);
+        }
+
+    private:
+        std::unordered_map<RE::FormID, RE::FormID> _focusMap;
+        std::mutex _mutex;
+    };
+
+    struct DetectionHook {
+        static std::uint8_t* thunk(RE::Actor* a_source, RE::Actor* a_target, std::int32_t& a_detectionValue, std::uint8_t& a_unk04, std::uint8_t& a_unk05, std::uint32_t& a_unk06, RE::NiPoint3& a_pos, float& a_unk08, float& a_unk09, float& a_unk10)
+        {
+            if (a_source && a_target) {
+                RE::FormID focus = FocusManager::GetSingleton()->GetFocus(a_source->GetFormID());
+                if (focus != 0) {
+                    if (a_target->GetFormID() == focus) {
+                        auto result = func(a_source, a_target, a_detectionValue, a_unk04, a_unk05, a_unk06, a_pos, a_unk08, a_unk09, a_unk10);
+                        a_detectionValue = 1000; // Force detected
+                        return result;
+                    } else {
+                        a_detectionValue = -1000; // Hide others
+                        return nullptr;
+                    }
+                }
+            }
+            return func(a_source, a_target, a_detectionValue, a_unk04, a_unk05, a_unk06, a_pos, a_unk08, a_unk09, a_unk10);
+        }
+
+        static inline REL::Relocation<decltype(thunk)> func;
+
+        static void Install() {
+            // RELOCATION_ID(41659, 42742), OFFSET(0x526, 0x67B)
+            REL::Relocation<std::uintptr_t> target{ REL::VariantID(41659, 42742, 0) };
+            
+            // We want to hook the CALL to this function, or the function itself?
+            // PapyrusExtender hooks the call site at OFFSET(0x526, 0x67B).
+            // Let's find where that offset is. It's usually in a detection loop.
+            // For stability, let's hook the call site like PapyrusExtender.
+            
+            uintptr_t hookAddr = target.address() + REL::Relocate(0x526, 0x67B, 0);
+            
+            auto& trampoline = SKSE::GetTrampoline();
+            func = trampoline.write_call<5>(hookAddr, thunk);
+            SKSE::log::info("Installed Detection Hook at {:X}", hookAddr);
+        }
+    };
+
     class ActorHook {
     public:
         static void Install() {
@@ -105,6 +171,7 @@ namespace Hook {
 
             // Target Switching Logic (only for NPCs)
             if (a_this->IsPlayerRef() || !a_this->IsInCombat()) {
+                FocusManager::GetSingleton()->ClearFocus(a_this->GetFormID());
                 return;
             }
 
@@ -132,7 +199,7 @@ namespace Hook {
             for (auto& combatTarget : combatGroup->targets) {
                 auto targetHandle = combatTarget.targetHandle;
                 auto target = targetHandle.get();
-                if (!target || target->IsDead() || combatTarget.detectLevel <= 0) {
+                if (!target || target->IsDead()) {
                     continue;
                 }
 
@@ -189,9 +256,22 @@ namespace Hook {
                         runtimeData.combatController->previousTargetHandle = currentTarget ? currentTarget->GetHandle() : RE::ActorHandle();
                     }
 
+                    FocusManager::GetSingleton()->SetFocus(a_this->GetFormID(), bestTarget->GetFormID());
+
                     /*SKSE::log::info(FMT_STRING("[TargetSwitch] {:X} switched target to {:X} (DPS: {:.1f}, Dist: {:.0f})"),
                         a_this->GetFormID(), bestTarget->GetFormID(), bestDPS, minDistance);*/
+                } else {
+                    // Maintain current focus
+                    if (currentTarget) {
+                        FocusManager::GetSingleton()->SetFocus(a_this->GetFormID(), currentTarget->GetFormID());
+                    }
                 }
+            } else if (bestTarget) {
+                // First target or already correct target
+                //SKSE::log::info("C : FocusManager;");
+                FocusManager::GetSingleton()->SetFocus(a_this->GetFormID(), bestTarget->GetFormID());
+            } else {
+                FocusManager::GetSingleton()->ClearFocus(a_this->GetFormID());
             }
         }
 
@@ -200,6 +280,7 @@ namespace Hook {
 
     void Install() {
         ActorHook::Install();
+        DetectionHook::Install();
     }
 
     void RegisterEvents() {
