@@ -1,9 +1,11 @@
 #include "hook.h"
 #include "threat.h"
+#include <SKSE/SKSE.h>
 #include "RE/A/Actor.h"
 #include "RE/C/CombatGroup.h"
 #include "RE/C/CombatController.h"
 #include "RE/T/TESHitEvent.h"
+#include "RE/T/TESForm.h"
 #include <mutex>
 #include <unordered_map>
 #include <vector>
@@ -69,6 +71,12 @@ namespace Hook {
                 if (victim && attacker) {
                     float health = victim->AsActorValueOwner()->GetActorValue(RE::ActorValue::kHealth);
                     HitTracker::GetSingleton()->RegisterHit(victim->GetFormID(), attacker->GetFormID(), health);
+
+                    // New: Bash Detection
+                    if (a_event->flags.any(RE::TESHitEvent::Flag::kBashAttack)) {
+                        float dist = victim->GetPosition().GetDistance(attacker->GetPosition());
+                        Threat::ThreatManager::GetSingleton()->AddBashHate(victim->GetFormID(), attacker->GetFormID(), dist);
+                    }
                 }
             }
             return RE::BSEventNotifyControl::kContinue;
@@ -128,25 +136,46 @@ namespace Hook {
             _UpdateCombat(a_this);
 
             if (!a_this || a_this->IsDead()) {
+                if (a_this) Threat::ThreatManager::GetSingleton()->ClearHate(a_this->GetFormID());
                 return;
+            }
+
+            RE::FormID victimID = a_this->GetFormID();
+
+            // Handle Decay
+            auto now = std::chrono::steady_clock::now();
+            float deltaTime = 0.0f;
+            {
+                std::lock_guard<std::mutex> lock(_updateMutex);
+                auto it = _lastUpdateMap.find(victimID);
+                if (it != _lastUpdateMap.end()) {
+                    deltaTime = std::chrono::duration<float>(now - it->second).count();
+                }
+                _lastUpdateMap[victimID] = now;
+            }
+
+            if (deltaTime > 0.0f) {
+                Threat::ThreatManager::GetSingleton()->ApplyDecay(victimID, deltaTime);
             }
 
             // Detect damage via health delta since last hit
             float currentHealth = a_this->AsActorValueOwner()->GetActorValue(RE::ActorValue::kHealth);
             RE::FormID attackerID;
             float damage;
-            if (HitTracker::GetSingleton()->GetAndClearDamage(a_this->GetFormID(), currentHealth, attackerID, damage)) {
+            if (HitTracker::GetSingleton()->GetAndClearDamage(victimID, currentHealth, attackerID, damage)) {
                 if (damage > 0.0f) {
-                    /*SKSE::log::info(FMT_STRING("[Damage] Victim={:X}, Attacker={:X}, Amount={:.1f}"),
-                        a_this->GetFormID(), attackerID, damage);*/
-                    
-                    Threat::ThreatManager::GetSingleton()->AddDamage(a_this->GetFormID(), attackerID, damage);
+                    auto attacker = RE::TESForm::LookupByID<RE::Actor>(attackerID);
+                    float dist = attacker ? a_this->GetPosition().GetDistance(attacker->GetPosition()) : 0.0f;
+                    Threat::ThreatManager::GetSingleton()->AddDamage(victimID, attackerID, damage, dist);
                 }
             }
 
             // Target Switching Logic (only for NPCs)
             if (a_this->IsPlayerRef() || !a_this->IsInCombat()) {
-                Threat::ThreatManager::GetSingleton()->ClearFocus(a_this->GetFormID());
+                Threat::ThreatManager::GetSingleton()->ClearFocus(victimID);
+                if (!a_this->IsPlayerRef() && !a_this->IsInCombat()) {
+                    Threat::ThreatManager::GetSingleton()->ClearHate(victimID);
+                }
                 return;
             }
 
@@ -178,13 +207,12 @@ namespace Hook {
                     runtimeData.combatController->targetHandle = bestTarget->GetHandle();
                     runtimeData.combatController->previousTargetHandle = currentTarget ? currentTarget->GetHandle() : RE::ActorHandle();
                 }
-
-                /*SKSE::log::info(FMT_STRING("[TargetSwitch] {:X} switched target to {:X}"),
-                    a_this->GetFormID(), bestTarget->GetFormID());*/
             }
         }
 
         static inline REL::Relocation<decltype(UpdateCombat)> _UpdateCombat;
+        static inline std::unordered_map<RE::FormID, std::chrono::steady_clock::time_point> _lastUpdateMap;
+        static inline std::mutex _updateMutex;
     };
 
     void Install() {
