@@ -43,6 +43,113 @@ namespace Threat {
         return totalDamage / _windowSeconds;
     }
 
+    static float GetDistanceWeight(float a_distance) {
+        if (a_distance < ThreatManager::kNearRange) return 1.0f;
+        if (a_distance < ThreatManager::kMidRange) return 0.6f;
+        return 0.3f;
+    }
+
+    float ThreatManager::GetThreatScore(RE::FormID a_targetID, RE::FormID a_attackerID, float a_distance, bool a_isClosest) {
+        float rawDPS = GetDPS(a_targetID, a_attackerID);
+        float effectiveDPS = a_isClosest ? std::max(rawDPS, kBaseThreat) : rawDPS;
+        return effectiveDPS * GetDistanceWeight(a_distance);
+    }
+
+    RE::Actor* ThreatManager::EvaluateBestTarget(RE::Actor* a_observer, RE::Actor* a_currentTarget, const std::vector<TargetCandidate>& a_candidates) {
+        if (a_candidates.empty()) {
+            ClearFocus(a_observer->GetFormID());
+            return nullptr;
+        }
+
+        // Find the closest valid target for Base Threat
+        RE::Actor* closestTarget = nullptr;
+        float minDistanceOverall = 1000000.0f;
+        for (const auto& candidate : a_candidates) {
+            if (candidate.distance < minDistanceOverall) {
+                minDistanceOverall = candidate.distance;
+                closestTarget = candidate.actor.get();
+            }
+        }
+
+        float currentScore = 0.0f;
+        float currentDistance = 1000000.0f;
+        if (a_currentTarget) {
+            currentDistance = a_observer->GetPosition().GetDistance(a_currentTarget->GetPosition());
+            currentScore = GetThreatScore(a_observer->GetFormID(), a_currentTarget->GetFormID(), currentDistance, (a_currentTarget == closestTarget));
+        }
+
+        RE::Actor* bestTarget = nullptr;
+        float bestScore = 0.0f;
+        float minDistanceBest = 1000000.0f;
+
+        for (const auto& candidate : a_candidates) {
+            float score = GetThreatScore(a_observer->GetFormID(), candidate.actor->GetFormID(), candidate.distance, (candidate.actor.get() == closestTarget));
+
+            bool isBetter = false;
+            if (!bestTarget) {
+                isBetter = true;
+            } else {
+                float scoreDiff = score - bestScore;
+                if (scoreDiff > 0.1f || (bestScore > 0 && scoreDiff / bestScore > 0.1f)) {
+                    isBetter = true;
+                } else if (std::abs(scoreDiff) < 0.1f) {
+                    if (candidate.distance < minDistanceBest) isBetter = true;
+                }
+            }
+
+            if (isBetter) {
+                bestTarget = candidate.actor.get();
+                bestScore = score;
+                minDistanceBest = candidate.distance;
+            }
+        }
+
+        // Switching Logic
+        if (bestTarget && bestTarget != a_currentTarget) {
+            bool shouldSwitch = false;
+            float scoreDiff = bestScore - currentScore;
+            if (scoreDiff > 0.1f || (currentScore > 0 && scoreDiff / currentScore > kSwitchThreshold)) {
+                shouldSwitch = true;
+            } else if (std::abs(scoreDiff) < 0.1f) {
+                if (minDistanceBest < currentDistance * kDistanceHysteresis) {
+                    shouldSwitch = true;
+                }
+            }
+
+            if (shouldSwitch) {
+                SetFocus(a_observer->GetFormID(), bestTarget->GetFormID());
+                return bestTarget;
+            }
+        }
+
+        if (a_currentTarget) {
+            SetFocus(a_observer->GetFormID(), a_currentTarget->GetFormID());
+            return a_currentTarget;
+        } else if (bestTarget) {
+            SetFocus(a_observer->GetFormID(), bestTarget->GetFormID());
+            return bestTarget;
+        }
+
+        ClearFocus(a_observer->GetFormID());
+        return nullptr;
+    }
+
+    RE::FormID ThreatManager::GetFocus(RE::FormID a_observerID) {
+        std::lock_guard<std::mutex> lock(_mutex);
+        auto it = _focusMap.find(a_observerID);
+        return (it != _focusMap.end()) ? it->second : 0;
+    }
+
+    void ThreatManager::SetFocus(RE::FormID a_observerID, RE::FormID a_targetID) {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _focusMap[a_observerID] = a_targetID;
+    }
+
+    void ThreatManager::ClearFocus(RE::FormID a_observerID) {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _focusMap.erase(a_observerID);
+    }
+
     void ThreatManager::Cleanup() {
         std::lock_guard<std::mutex> lock(_mutex);
         

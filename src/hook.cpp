@@ -4,6 +4,9 @@
 #include "RE/C/CombatGroup.h"
 #include "RE/C/CombatController.h"
 #include "RE/T/TESHitEvent.h"
+#include <mutex>
+#include <unordered_map>
+#include <vector>
 
 namespace Hook {
     struct LastHitData {
@@ -72,39 +75,11 @@ namespace Hook {
         }
     };
 
-    class FocusManager {
-    public:
-        static FocusManager* GetSingleton() {
-            static FocusManager singleton;
-            return &singleton;
-        }
-
-        void SetFocus(RE::FormID a_observer, RE::FormID a_target) {
-            std::lock_guard<std::mutex> lock(_mutex);
-            _focusMap[a_observer] = a_target;
-        }
-
-        RE::FormID GetFocus(RE::FormID a_observer) {
-            std::lock_guard<std::mutex> lock(_mutex);
-            auto it = _focusMap.find(a_observer);
-            return (it != _focusMap.end()) ? it->second : 0;
-        }
-
-        void ClearFocus(RE::FormID a_observer) {
-            std::lock_guard<std::mutex> lock(_mutex);
-            _focusMap.erase(a_observer);
-        }
-
-    private:
-        std::unordered_map<RE::FormID, RE::FormID> _focusMap;
-        std::mutex _mutex;
-    };
-
     struct DetectionHook {
         static std::uint8_t* thunk(RE::Actor* a_source, RE::Actor* a_target, std::int32_t& a_detectionValue, std::uint8_t& a_unk04, std::uint8_t& a_unk05, std::uint32_t& a_unk06, RE::NiPoint3& a_pos, float& a_unk08, float& a_unk09, float& a_unk10)
         {
             if (a_source && a_target) {
-                RE::FormID focus = FocusManager::GetSingleton()->GetFocus(a_source->GetFormID());
+                RE::FormID focus = Threat::ThreatManager::GetSingleton()->GetFocus(a_source->GetFormID());
                 if (focus != 0) {
                     if (a_target->GetFormID() == focus) {
                         auto result = func(a_source, a_target, a_detectionValue, a_unk04, a_unk05, a_unk06, a_pos, a_unk08, a_unk09, a_unk10);
@@ -140,16 +115,6 @@ namespace Hook {
 
     class ActorHook {
     public:
-        static constexpr float kBaseThreat = 5.0f;
-        static constexpr float kNearRange = 800.0f;
-        static constexpr float kMidRange = 2000.0f;
-
-        static float GetDistanceWeight(float a_distance) {
-            if (a_distance < kNearRange) return 1.0f;
-            if (a_distance < kMidRange) return 0.8f;
-            return 0.6f;
-        }
-
         static void Install() {
             // Hook UpdateCombat (VTable index 0xE4) - Confirmed working
             REL::Relocation<std::uintptr_t> characterVtable{ RE::VTABLE_Character[0] };
@@ -181,7 +146,7 @@ namespace Hook {
 
             // Target Switching Logic (only for NPCs)
             if (a_this->IsPlayerRef() || !a_this->IsInCombat()) {
-                FocusManager::GetSingleton()->ClearFocus(a_this->GetFormID());
+                Threat::ThreatManager::GetSingleton()->ClearFocus(a_this->GetFormID());
                 return;
             }
 
@@ -193,111 +158,29 @@ namespace Hook {
             auto& runtimeData = a_this->GetActorRuntimeData();
             auto currentTarget = runtimeData.currentCombatTarget.get();
             
-            // First Pass: Find the closest valid target for Base Threat
-            RE::NiPointer<RE::Actor> closestTarget = nullptr;
-            float minDistanceOverall = 1000000.0f;
-
+            std::vector<Threat::TargetCandidate> candidates;
             {
                 RE::BSReadLockGuard lock(combatGroup->lock);
                 for (auto& combatTarget : combatGroup->targets) {
                     auto target = combatTarget.targetHandle.get();
                     if (!target || target->IsDead()) continue;
                     float dist = a_this->GetPosition().GetDistance(target->GetPosition());
-                    if (dist < minDistanceOverall) {
-                        minDistanceOverall = dist;
-                        closestTarget = target;
-                    }
+                    candidates.push_back({ target, dist });
                 }
             }
 
-            float currentScore = 0.0f;
-            float currentDistance = 1000000.0f;
-            
-            if (currentTarget) {
-                float rawDPS = Threat::ThreatManager::GetSingleton()->GetDPS(a_this->GetFormID(), currentTarget->GetFormID());
-                currentDistance = a_this->GetPosition().GetDistance(currentTarget->GetPosition());
-                // Treat DPS of closest target as at least {kBaseThreat}
-                float effectiveDPS = (currentTarget == closestTarget) ? std::max(rawDPS, kBaseThreat) : rawDPS;
-                currentScore = effectiveDPS * GetDistanceWeight(currentDistance);
-            }
+            auto bestTarget = Threat::ThreatManager::GetSingleton()->EvaluateBestTarget(a_this, currentTarget.get(), candidates);
 
-            RE::NiPointer<RE::Actor> bestTarget = nullptr;
-            float bestScore = 0.0f;
-            float minDistanceBest = 1000000.0f;
-
-            {
-                RE::BSReadLockGuard lock(combatGroup->lock);
-                for (auto& combatTarget : combatGroup->targets) {
-                    auto targetHandle = combatTarget.targetHandle;
-                    auto target = targetHandle.get();
-                    if (!target || target->IsDead()) {
-                        continue;
-                    }
-
-                    float rawDPS = Threat::ThreatManager::GetSingleton()->GetDPS(a_this->GetFormID(), target->GetFormID());
-                    float dist = a_this->GetPosition().GetDistance(target->GetPosition());
-                    
-                    float effectiveDPS = (target == closestTarget) ? std::max(rawDPS, kBaseThreat) : rawDPS;
-                    float score = effectiveDPS * GetDistanceWeight(dist);
-
-                    // Selection Logic based on weighted score:
-                    bool isBetter = false;
-                    if (!bestTarget) {
-                        isBetter = true;
-                    } else {
-                        float scoreDiff = score - bestScore;
-                        if (scoreDiff > 0.1f || (bestScore > 0 && scoreDiff / bestScore > 0.1f)) {
-                            isBetter = true;
-                        } else if (std::abs(scoreDiff) < 0.1f) {
-                            if (dist < minDistanceBest) isBetter = true;
-                        }
-                    }
-
-                    if (isBetter) {
-                        bestTarget = target;
-                        bestScore = score;
-                        minDistanceBest = dist;
-                    }
-                }
-            }
-
-            if (bestTarget && bestTarget.get() != currentTarget.get()) {
-                // Threshold to switch:
-                bool shouldSwitch = false;
+            if (bestTarget && bestTarget != currentTarget.get()) {
+                runtimeData.currentCombatTarget = bestTarget->GetHandle();
                 
-                float scoreDiff = bestScore - currentScore;
-                if (scoreDiff > 0.1f || (currentScore > 0 && scoreDiff / currentScore > 0.15f)) {
-                    shouldSwitch = true;
-                } else if (std::abs(scoreDiff) < 0.1f) {
-                    // Similar Score, check if distance is much better
-                    if (minDistanceBest < currentDistance * 0.85f) {
-                        shouldSwitch = true;
-                    }
+                if (runtimeData.combatController) {
+                    runtimeData.combatController->targetHandle = bestTarget->GetHandle();
+                    runtimeData.combatController->previousTargetHandle = currentTarget ? currentTarget->GetHandle() : RE::ActorHandle();
                 }
 
-                if (shouldSwitch) {
-                    runtimeData.currentCombatTarget = bestTarget->GetHandle();
-                    
-                    if (runtimeData.combatController) {
-                        runtimeData.combatController->targetHandle = bestTarget->GetHandle();
-                        runtimeData.combatController->previousTargetHandle = currentTarget ? currentTarget->GetHandle() : RE::ActorHandle();
-                    }
-
-                    FocusManager::GetSingleton()->SetFocus(a_this->GetFormID(), bestTarget->GetFormID());
-
-                    /*SKSE::log::info(FMT_STRING("[TargetSwitch] {:X} switched target to {:X} (DPS Score: {:.1f}, Dist: {:.0f})"),
-                        a_this->GetFormID(), bestTarget->GetFormID(), bestScore, minDistanceBest);*/
-                } else {
-                    // Maintain current focus
-                    if (currentTarget) {
-                        FocusManager::GetSingleton()->SetFocus(a_this->GetFormID(), currentTarget->GetFormID());
-                    }
-                }
-            } else if (bestTarget) {
-                // First target or already correct target
-                FocusManager::GetSingleton()->SetFocus(a_this->GetFormID(), bestTarget->GetFormID());
-            } else {
-                FocusManager::GetSingleton()->ClearFocus(a_this->GetFormID());
+                SKSE::log::info(FMT_STRING("[TargetSwitch] {:X} switched target to {:X}"),
+                    a_this->GetFormID(), bestTarget->GetFormID());
             }
         }
 
