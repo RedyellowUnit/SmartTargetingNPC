@@ -179,8 +179,8 @@ namespace Hook {
                     runtimeData.combatController->previousTargetHandle = currentTarget ? currentTarget->GetHandle() : RE::ActorHandle();
                 }
 
-                SKSE::log::info(FMT_STRING("[TargetSwitch] {:X} switched target to {:X}"),
-                    a_this->GetFormID(), bestTarget->GetFormID());
+                /*SKSE::log::info(FMT_STRING("[TargetSwitch] {:X} switched target to {:X}"),
+                    a_this->GetFormID(), bestTarget->GetFormID());*/
             }
         }
 
