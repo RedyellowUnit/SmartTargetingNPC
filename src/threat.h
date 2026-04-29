@@ -38,7 +38,6 @@ namespace Threat {
         static constexpr float kNearRange = 800.0f;
         static constexpr float kMidRange = 2000.0f;
         static constexpr float kSwitchThreshold = 0.15f;
-        static constexpr float kDistanceHysteresis = 0.85f;
 
     private:
         ThreatManager() = default;

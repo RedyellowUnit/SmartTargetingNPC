@@ -80,43 +80,20 @@ namespace Threat {
 
         RE::Actor* bestTarget = nullptr;
         float bestScore = 0.0f;
-        float minDistanceBest = 1000000.0f;
 
         for (const auto& candidate : a_candidates) {
             float score = GetThreatScore(a_observer->GetFormID(), candidate.actor->GetFormID(), candidate.distance, (candidate.actor.get() == closestTarget));
 
-            bool isBetter = false;
-            if (!bestTarget) {
-                isBetter = true;
-            } else {
-                float scoreDiff = score - bestScore;
-                if (scoreDiff > 0.1f || (bestScore > 0 && scoreDiff / bestScore > 0.1f)) {
-                    isBetter = true;
-                } else if (std::abs(scoreDiff) < 0.1f) {
-                    if (candidate.distance < minDistanceBest) isBetter = true;
-                }
-            }
-
-            if (isBetter) {
+            if (!bestTarget || score > bestScore) {
                 bestTarget = candidate.actor.get();
                 bestScore = score;
-                minDistanceBest = candidate.distance;
             }
         }
 
         // Switching Logic
         if (bestTarget && bestTarget != a_currentTarget) {
-            bool shouldSwitch = false;
             float scoreDiff = bestScore - currentScore;
             if (scoreDiff > 0.1f || (currentScore > 0 && scoreDiff / currentScore > kSwitchThreshold)) {
-                shouldSwitch = true;
-            } else if (std::abs(scoreDiff) < 0.1f) {
-                if (minDistanceBest < currentDistance * kDistanceHysteresis) {
-                    shouldSwitch = true;
-                }
-            }
-
-            if (shouldSwitch) {
                 SetFocus(a_observer->GetFormID(), bestTarget->GetFormID());
                 return bestTarget;
             }
