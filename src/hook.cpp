@@ -140,6 +140,16 @@ namespace Hook {
 
     class ActorHook {
     public:
+        static constexpr float kBaseThreat = 5.0f;
+        static constexpr float kNearRange = 800.0f;
+        static constexpr float kMidRange = 2000.0f;
+
+        static float GetDistanceWeight(float a_distance) {
+            if (a_distance < kNearRange) return 1.0f;
+            if (a_distance < kMidRange) return 0.8f;
+            return 0.6f;
+        }
+
         static void Install() {
             // Hook UpdateCombat (VTable index 0xE4) - Confirmed working
             REL::Relocation<std::uintptr_t> characterVtable{ RE::VTABLE_Character[0] };
@@ -183,67 +193,84 @@ namespace Hook {
             auto& runtimeData = a_this->GetActorRuntimeData();
             auto currentTarget = runtimeData.currentCombatTarget.get();
             
-            float currentDPS = 0.0f;
+            // First Pass: Find the closest valid target for Base Threat
+            RE::NiPointer<RE::Actor> closestTarget = nullptr;
+            float minDistanceOverall = 1000000.0f;
+
+            {
+                RE::BSReadLockGuard lock(combatGroup->lock);
+                for (auto& combatTarget : combatGroup->targets) {
+                    auto target = combatTarget.targetHandle.get();
+                    if (!target || target->IsDead()) continue;
+                    float dist = a_this->GetPosition().GetDistance(target->GetPosition());
+                    if (dist < minDistanceOverall) {
+                        minDistanceOverall = dist;
+                        closestTarget = target;
+                    }
+                }
+            }
+
+            float currentScore = 0.0f;
             float currentDistance = 1000000.0f;
             
             if (currentTarget) {
-                currentDPS = Threat::ThreatManager::GetSingleton()->GetDPS(a_this->GetFormID(), currentTarget->GetFormID());
+                float rawDPS = Threat::ThreatManager::GetSingleton()->GetDPS(a_this->GetFormID(), currentTarget->GetFormID());
                 currentDistance = a_this->GetPosition().GetDistance(currentTarget->GetPosition());
+                // Treat DPS of closest target as at least {kBaseThreat}
+                float effectiveDPS = (currentTarget == closestTarget) ? std::max(rawDPS, kBaseThreat) : rawDPS;
+                currentScore = effectiveDPS * GetDistanceWeight(currentDistance);
             }
 
             RE::NiPointer<RE::Actor> bestTarget = nullptr;
-            float bestDPS = 0.0f;
-            float minDistance = 1000000.0f;
+            float bestScore = 0.0f;
+            float minDistanceBest = 1000000.0f;
 
-            RE::BSReadLockGuard lock(combatGroup->lock);
-            for (auto& combatTarget : combatGroup->targets) {
-                auto targetHandle = combatTarget.targetHandle;
-                auto target = targetHandle.get();
-                if (!target || target->IsDead()) {
-                    continue;
-                }
+            {
+                RE::BSReadLockGuard lock(combatGroup->lock);
+                for (auto& combatTarget : combatGroup->targets) {
+                    auto targetHandle = combatTarget.targetHandle;
+                    auto target = targetHandle.get();
+                    if (!target || target->IsDead()) {
+                        continue;
+                    }
 
-                float dps = Threat::ThreatManager::GetSingleton()->GetDPS(a_this->GetFormID(), target->GetFormID());
-                float dist = a_this->GetPosition().GetDistance(target->GetPosition());
+                    float rawDPS = Threat::ThreatManager::GetSingleton()->GetDPS(a_this->GetFormID(), target->GetFormID());
+                    float dist = a_this->GetPosition().GetDistance(target->GetPosition());
+                    
+                    float effectiveDPS = (target == closestTarget) ? std::max(rawDPS, kBaseThreat) : rawDPS;
+                    float score = effectiveDPS * GetDistanceWeight(dist);
 
-                // Selection Logic:
-                // 1. Higher DPS wins.
-                // 2. If DPS is close (difference < 1.0 or < 10%), closer distance wins.
-                
-                bool isBetter = false;
-                if (!bestTarget) {
-                    isBetter = true;
-                } else {
-                    float dpsDiff = dps - bestDPS;
-                    if (dpsDiff > 1.0f || (bestDPS > 0 && dpsDiff / bestDPS > 0.1f)) {
-                        // Significantly higher DPS
+                    // Selection Logic based on weighted score:
+                    bool isBetter = false;
+                    if (!bestTarget) {
                         isBetter = true;
-                    } else if (std::abs(dpsDiff) < 1.0f || (bestDPS > 0 && std::abs(dpsDiff / bestDPS) < 0.1f)) {
-                        // DPS is similar, compare distance
-                        if (dist < minDistance) {
+                    } else {
+                        float scoreDiff = score - bestScore;
+                        if (scoreDiff > 0.1f || (bestScore > 0 && scoreDiff / bestScore > 0.1f)) {
                             isBetter = true;
+                        } else if (std::abs(scoreDiff) < 0.1f) {
+                            if (dist < minDistanceBest) isBetter = true;
                         }
                     }
-                }
 
-                if (isBetter) {
-                    bestTarget = target;
-                    bestDPS = dps;
-                    minDistance = dist;
+                    if (isBetter) {
+                        bestTarget = target;
+                        bestScore = score;
+                        minDistanceBest = dist;
+                    }
                 }
             }
 
             if (bestTarget && bestTarget.get() != currentTarget.get()) {
                 // Threshold to switch:
-                // Only switch if the best target is significantly better than current.
                 bool shouldSwitch = false;
                 
-                float dpsDiff = bestDPS - currentDPS;
-                if (dpsDiff > 1.0f || (currentDPS > 0 && dpsDiff / currentDPS > 0.15f)) {
+                float scoreDiff = bestScore - currentScore;
+                if (scoreDiff > 0.1f || (currentScore > 0 && scoreDiff / currentScore > 0.15f)) {
                     shouldSwitch = true;
-                } else if (std::abs(dpsDiff) < 1.0f || (currentDPS > 0 && std::abs(dpsDiff / currentDPS) < 0.15f)) {
-                    // Similar DPS, check if distance is much better
-                    if (minDistance < currentDistance * 0.85f) {
+                } else if (std::abs(scoreDiff) < 0.1f) {
+                    // Similar Score, check if distance is much better
+                    if (minDistanceBest < currentDistance * 0.85f) {
                         shouldSwitch = true;
                     }
                 }
@@ -258,8 +285,8 @@ namespace Hook {
 
                     FocusManager::GetSingleton()->SetFocus(a_this->GetFormID(), bestTarget->GetFormID());
 
-                    /*SKSE::log::info(FMT_STRING("[TargetSwitch] {:X} switched target to {:X} (DPS: {:.1f}, Dist: {:.0f})"),
-                        a_this->GetFormID(), bestTarget->GetFormID(), bestDPS, minDistance);*/
+                    /*SKSE::log::info(FMT_STRING("[TargetSwitch] {:X} switched target to {:X} (DPS Score: {:.1f}, Dist: {:.0f})"),
+                        a_this->GetFormID(), bestTarget->GetFormID(), bestScore, minDistanceBest);*/
                 } else {
                     // Maintain current focus
                     if (currentTarget) {
@@ -268,7 +295,6 @@ namespace Hook {
                 }
             } else if (bestTarget) {
                 // First target or already correct target
-                //SKSE::log::info("C : FocusManager;");
                 FocusManager::GetSingleton()->SetFocus(a_this->GetFormID(), bestTarget->GetFormID());
             } else {
                 FocusManager::GetSingleton()->ClearFocus(a_this->GetFormID());
