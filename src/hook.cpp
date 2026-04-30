@@ -104,10 +104,14 @@ namespace Hook {
                     if (a_target->GetFormID() == focus) {
                         auto result = func(a_source, a_target, a_detectionValue, a_unk04, a_unk05, a_unk06, a_pos, a_unk08, a_unk09, a_unk10);
                         float dist = a_source->GetPosition().GetDistance(a_target->GetPosition());
-                        if (dist < kForceDetectRange) {
-                            a_detectionValue = 1000; // Force detected within combat range
+                        // Only boost if:
+                        //   1. Within combat range (not an escaping actor)
+                        //   2. Vanilla already determined the target IS detectable (positive value).
+                        //      If vanilla returns negative (sneaking, behind wall, not yet found),
+                        //      we respect that and do not override.
+                        if (dist < kForceDetectRange && a_detectionValue > 0) {
+                            a_detectionValue = 1000;
                         }
-                        // Beyond kForceDetectRange: leave vanilla result as-is → escape is possible
                         return result;
                     } else {
                         // Suppress non-focus targets so vanilla AI is forced to pursue
