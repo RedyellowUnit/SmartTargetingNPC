@@ -83,18 +83,38 @@ namespace Hook {
         }
     };
 
+    // DetectionHook: forces NPC to "see" its hate-based focus target within range.
+    // -1000 suppression on non-focus targets is intentionally retained:
+    //   Without it, vanilla combat AI prefers closer targets, ignoring the distant ranged attacker.
+    // The infinite-chase bug is fixed by capping force-detection to kForceDetectRange:
+    //   When the player flees beyond this range, focus is not force-detected → vanilla clears target
+    //   → focus is cleared → suppression stops → faction NPCs naturally resume fighting each other.
     struct DetectionHook {
-        static std::uint8_t* thunk(RE::Actor* a_source, RE::Actor* a_target, std::int32_t& a_detectionValue, std::uint8_t& a_unk04, std::uint8_t& a_unk05, std::uint32_t& a_unk06, RE::NiPoint3& a_pos, float& a_unk08, float& a_unk09, float& a_unk10)
+        // Beyond this distance, force-detection is not applied.
+        // Vanilla's natural escape/disengage logic takes over.
+        static constexpr float kForceDetectRange = 3000.0f;
+
+        static std::uint8_t* thunk(RE::Actor* a_source, RE::Actor* a_target,
+            std::int32_t& a_detectionValue, std::uint8_t& a_unk04, std::uint8_t& a_unk05,
+            std::uint32_t& a_unk06, RE::NiPoint3& a_pos, float& a_unk08, float& a_unk09, float& a_unk10)
         {
             if (a_source && a_target) {
                 RE::FormID focus = Threat::ThreatManager::GetSingleton()->GetFocus(a_source->GetFormID());
                 if (focus != 0) {
                     if (a_target->GetFormID() == focus) {
                         auto result = func(a_source, a_target, a_detectionValue, a_unk04, a_unk05, a_unk06, a_pos, a_unk08, a_unk09, a_unk10);
-                        a_detectionValue = 1000; // Force detected
+                        float dist = a_source->GetPosition().GetDistance(a_target->GetPosition());
+                        if (dist < kForceDetectRange) {
+                            a_detectionValue = 1000; // Force detected within combat range
+                        }
+                        // Beyond kForceDetectRange: leave vanilla result as-is → escape is possible
                         return result;
                     } else {
-                        a_detectionValue = -1000; // Hide others
+                        // Suppress non-focus targets so vanilla AI is forced to pursue
+                        // the hate-based focus (e.g., distant mage over close melee enemy).
+                        // This suppression ends automatically when focus is cleared (player escaped),
+                        // allowing vanilla faction-vs-faction combat to resume.
+                        a_detectionValue = -1000;
                         return nullptr;
                     }
                 }
@@ -105,22 +125,13 @@ namespace Hook {
         static inline REL::Relocation<decltype(thunk)> func;
 
         static void Install() {
-            // RELOCATION_ID(41659, 42742), OFFSET(0x526, 0x67B)
             REL::Relocation<std::uintptr_t> target{ REL::VariantID(41659, 42742, 0) };
-            
-            // We want to hook the CALL to this function, or the function itself?
-            // PapyrusExtender hooks the call site at OFFSET(0x526, 0x67B).
-            // Let's find where that offset is. It's usually in a detection loop.
-            // For stability, let's hook the call site like PapyrusExtender.
-            
             uintptr_t hookAddr = target.address() + REL::Relocate(0x526, 0x67B, 0);
-            
             auto& trampoline = SKSE::GetTrampoline();
             func = trampoline.write_call<5>(hookAddr, thunk);
             SKSE::log::info("Installed Detection Hook at {:X}", hookAddr);
         }
     };
-
     class ActorHook {
     public:
         static void Install() {
@@ -186,6 +197,14 @@ namespace Hook {
 
             auto& runtimeData = a_this->GetActorRuntimeData();
             auto currentTarget = runtimeData.currentCombatTarget.get();
+
+            // If the vanilla engine cleared the target (e.g., player fled out of detection range),
+            // respect that decision and do not force a new target via hate scores alone.
+            // This allows vanilla faction-vs-faction combat to resume naturally.
+            if (!currentTarget) {
+                Threat::ThreatManager::GetSingleton()->ClearFocus(victimID);
+                return;
+            }
             
             std::vector<Threat::TargetCandidate> candidates;
             {

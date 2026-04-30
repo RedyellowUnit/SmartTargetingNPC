@@ -17,8 +17,8 @@ namespace Threat {
         float weightedDamage = a_damage * GetDistanceWeight(a_distance);
         _hateTable[a_targetID][a_attackerID] += weightedDamage;
 
-        SKSE::log::info(FMT_STRING("[Hate] Victim={:X} Attacker={:X} +{:.1f} (type=Damage) Total={:.1f}"),
-            a_targetID, a_attackerID, weightedDamage, _hateTable[a_targetID][a_attackerID]);
+        /*SKSE::log::info(FMT_STRING("[Hate] Victim={:X} Attacker={:X} +{:.1f} (type=Damage) Total={:.1f}"),
+            a_targetID, a_attackerID, weightedDamage, _hateTable[a_targetID][a_attackerID]);*/
     }
 
     void ThreatManager::AddBashHate(RE::FormID a_targetID, RE::FormID a_attackerID, float a_distance) {
@@ -26,8 +26,8 @@ namespace Threat {
         float weightedBash = kBashHateValue * GetDistanceWeight(a_distance);
         _hateTable[a_targetID][a_attackerID] += weightedBash;
 
-        SKSE::log::info(FMT_STRING("[Hate] Victim={:X} Attacker={:X} +{:.1f} (type=Bash) Total={:.1f}"),
-            a_targetID, a_attackerID, weightedBash, _hateTable[a_targetID][a_attackerID]);
+        /*SKSE::log::info(FMT_STRING("[Hate] Victim={:X} Attacker={:X} +{:.1f} (type=Bash) Total={:.1f}"),
+            a_targetID, a_attackerID, weightedBash, _hateTable[a_targetID][a_attackerID]);*/
     }
 
     float ThreatManager::GetHate(RE::FormID a_targetID, RE::FormID a_attackerID) {
@@ -83,8 +83,8 @@ namespace Threat {
                 if (closest) {
                     float initialHate = kBaseThreat * GetDistanceWeight(minDist);
                     _hateTable[observerID][closest->GetFormID()] = initialHate;
-                    SKSE::log::info(FMT_STRING("[Hate] Victim={:X} Initial Hate to Attacker={:X} (Total={:.1f})"),
-                        observerID, closest->GetFormID(), initialHate);
+                    /*SKSE::log::info(FMT_STRING("[Hate] Victim={:X} Initial Hate to Attacker={:X} (Total={:.1f})"),
+                        observerID, closest->GetFormID(), initialHate);*/
                 }
             }
         }
@@ -109,10 +109,10 @@ namespace Threat {
             if (hateDiff > 0.1f || (currentHate > 0 && hateDiff / currentHate > kSwitchThreshold)) {
                 SetFocus(observerID, bestTarget->GetFormID());
                 
-                SKSE::log::info(FMT_STRING("[TargetSwitch] {:X} ({}) switched target to {:X} ({}) (Hate={:.1f}, Dist={:.1f})"),
+                /*SKSE::log::info(FMT_STRING("[TargetSwitch] {:X} ({}) switched target to {:X} ({}) (Hate={:.1f}, Dist={:.1f})"),
                     observerID, a_observer->GetDisplayFullName(), 
                     bestTarget->GetFormID(), bestTarget->GetDisplayFullName(),
-                    bestHate, a_observer->GetPosition().GetDistance(bestTarget->GetPosition()));
+                    bestHate, a_observer->GetPosition().GetDistance(bestTarget->GetPosition()));*/
 
                 return bestTarget;
             }
