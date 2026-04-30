@@ -114,12 +114,18 @@ namespace Hook {
                         }
                         return result;
                     } else {
-                        // Suppress non-focus targets so vanilla AI is forced to pursue
-                        // the hate-based focus (e.g., distant mage over close melee enemy).
-                        // This suppression ends automatically when focus is cleared (player escaped),
-                        // allowing vanilla faction-vs-faction combat to resume.
-                        a_detectionValue = -1000;
-                        return nullptr;
+                        // Only suppress non-focus targets when focus is a ranged attacker (far away).
+                        // If focus is in melee range, skip suppression so new actors (e.g. player
+                        // joining mid-fight) can be detected normally by vanilla.
+                        auto focusActor = RE::TESForm::LookupByID<RE::Actor>(focus);
+                        float focusDist = focusActor
+                            ? a_source->GetPosition().GetDistance(focusActor->GetPosition())
+                            : Threat::ThreatManager::kMidRange; // treat missing as far
+                        if (focusDist > Threat::ThreatManager::kNearRange) {
+                            a_detectionValue = -1000;
+                            return nullptr;
+                        }
+                        // Focus is nearby: allow vanilla to detect all actors naturally
                     }
                 }
             }

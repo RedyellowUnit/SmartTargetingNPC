@@ -68,24 +68,15 @@ namespace Threat {
 
         RE::FormID observerID = a_observer->GetFormID();
 
-        // Initial Hate: If table is empty, give bonus to closest
-        {
-            std::lock_guard<std::mutex> lock(_mutex);
-            if (_hateTable[observerID].empty()) {
-                float minDist = 1000000.0f;
-                RE::Actor* closest = nullptr;
-                for (const auto& cand : a_candidates) {
-                    if (cand.distance < minDist) {
-                        minDist = cand.distance;
-                        closest = cand.actor.get();
-                    }
-                }
-                if (closest) {
-                    float initialHate = kBaseThreat * GetDistanceWeight(minDist);
-                    _hateTable[observerID][closest->GetFormID()] = initialHate;
-                    /*SKSE::log::info(FMT_STRING("[Hate] Victim={:X} Initial Hate to Attacker={:X} (Total={:.1f})"),
-                        observerID, closest->GetFormID(), initialHate);*/
-                }
+        // Always find the closest candidate and give them Base Threat as a minimum effective hate.
+        // This ensures a newly-detected actor (e.g. player joining mid-fight) with no accumulated hate
+        // can still become the target if they are the closest, matching proximity-based targeting intent.
+        RE::Actor* closestCandidate = nullptr;
+        float minDist = 1000000.0f;
+        for (const auto& cand : a_candidates) {
+            if (cand.distance < minDist) {
+                minDist = cand.distance;
+                closestCandidate = cand.actor.get();
             }
         }
 
@@ -96,6 +87,14 @@ namespace Threat {
 
         for (const auto& candidate : a_candidates) {
             float hate = GetHate(observerID, candidate.actor->GetFormID());
+
+            // Give Base Threat to the closest candidate as a minimum.
+            // For existing targets with high accumulated hate, this has no effect.
+            // For new actors with 0 hate, this makes them competitive when closest.
+            if (closestCandidate && candidate.actor.get() == closestCandidate) {
+                float proximityHate = kBaseThreat * GetDistanceWeight(candidate.distance);
+                hate = std::max(hate, proximityHate);
+            }
 
             if (!bestTarget || hate > bestHate) {
                 bestTarget = candidate.actor.get();
