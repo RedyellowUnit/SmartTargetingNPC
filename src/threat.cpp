@@ -113,10 +113,10 @@ namespace Threat {
             if (hateDiff > 0.1f || (currentHate > 0 && hateDiff / currentHate > kSwitchThreshold)) {
                 SetFocus(observerID, bestTarget->GetFormID());
                 
-                SKSE::log::info(FMT_STRING("[TargetSwitch] {:X} ({}) switched target to {:X} ({}) (Hate={:.1f}, Dist={:.1f})"),
+                /*SKSE::log::info(FMT_STRING("[TargetSwitch] {:X} ({}) switched target to {:X} ({}) (Hate={:.1f}, Dist={:.1f})"),
                     observerID, a_observer->GetDisplayFullName(), 
                     bestTarget->GetFormID(), bestTarget->GetDisplayFullName(),
-                    bestHate, a_observer->GetPosition().GetDistance(bestTarget->GetPosition()));
+                    bestHate, a_observer->GetPosition().GetDistance(bestTarget->GetPosition()));*/
 
                 return bestTarget;
             }
