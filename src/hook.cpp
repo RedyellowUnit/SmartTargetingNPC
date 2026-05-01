@@ -163,22 +163,6 @@ namespace Hook {
 
             RE::FormID victimID = a_this->GetFormID();
 
-            // Handle Decay
-            auto now = std::chrono::steady_clock::now();
-            float deltaTime = 0.0f;
-            {
-                std::lock_guard<std::mutex> lock(_updateMutex);
-                auto it = _lastUpdateMap.find(victimID);
-                if (it != _lastUpdateMap.end()) {
-                    deltaTime = std::chrono::duration<float>(now - it->second).count();
-                }
-                _lastUpdateMap[victimID] = now;
-            }
-
-            if (deltaTime > 0.0f) {
-                Threat::ThreatManager::GetSingleton()->ApplyDecay(victimID, deltaTime);
-            }
-
             // Detect damage via health delta since last hit
             float currentHealth = a_this->AsActorValueOwner()->GetActorValue(RE::ActorValue::kHealth);
             RE::FormID attackerID;
@@ -190,6 +174,31 @@ namespace Hook {
                     Threat::ThreatManager::GetSingleton()->AddDamage(victimID, attackerID, damage, dist);
                 }
             }
+
+            // Handle Decay and AI processing throttle
+            auto now = std::chrono::steady_clock::now();
+            float deltaTime = 0.0f;
+            {
+                std::lock_guard<std::mutex> lock(_updateMutex);
+                auto it = _lastUpdateMap.find(victimID);
+                if (it != _lastUpdateMap.end()) {
+                    deltaTime = std::chrono::duration<float>(now - it->second).count();
+                    
+                    // Throttling: Only run custom AI evaluation every 0.25 seconds.
+                    // Running this every frame for multiple followers causes severe lock contention
+                    // and AI starvation (frozen actors).
+                    if (deltaTime < 0.25f) {
+                        return;
+                    }
+                }
+                
+                _lastUpdateMap[victimID] = now;
+            }
+
+            if (deltaTime > 0.0f) {
+                Threat::ThreatManager::GetSingleton()->ApplyDecay(victimID, deltaTime);
+            }
+
 
             // Target Switching Logic (only for NPCs)
             if (a_this->IsPlayerRef() || !a_this->IsInCombat()) {
