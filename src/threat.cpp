@@ -75,6 +75,7 @@ namespace Threat {
         {
             std::shared_lock<std::shared_mutex> lock(_hateMutex);
             auto itObserver = _hateTable.find(observerID);
+            auto itHateTableEnd = _hateTable.end();
 
             if (a_currentTarget && itObserver != _hateTable.end()) {
                 auto itTarget = itObserver->second.find(a_currentTarget->GetFormID());
@@ -85,7 +86,7 @@ namespace Threat {
 
             for (const auto& candidate : a_candidates) {
                 float hate = 0.0f;
-                if (itObserver != _hateTable.end()) {
+                if (itObserver != itHateTableEnd) {
                     auto itCand = itObserver->second.find(candidate.actor->GetFormID());
                     if (itCand != itObserver->second.end()) {
                         hate = itCand->second;
