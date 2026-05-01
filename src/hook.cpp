@@ -1,9 +1,11 @@
 #include "hook.h"
 #include "threat.h"
+#include <SKSE/SKSE.h>
 #include "RE/A/Actor.h"
 #include "RE/C/CombatGroup.h"
 #include "RE/C/CombatController.h"
 #include "RE/T/TESHitEvent.h"
+#include "RE/T/TESForm.h"
 #include <mutex>
 #include <unordered_map>
 #include <vector>
@@ -69,25 +71,61 @@ namespace Hook {
                 if (victim && attacker) {
                     float health = victim->AsActorValueOwner()->GetActorValue(RE::ActorValue::kHealth);
                     HitTracker::GetSingleton()->RegisterHit(victim->GetFormID(), attacker->GetFormID(), health);
+
+                    // New: Bash Detection
+                    if (a_event->flags.any(RE::TESHitEvent::Flag::kBashAttack)) {
+                        float dist = victim->GetPosition().GetDistance(attacker->GetPosition());
+                        Threat::ThreatManager::GetSingleton()->AddBashHate(victim->GetFormID(), attacker->GetFormID(), dist);
+                    }
                 }
             }
             return RE::BSEventNotifyControl::kContinue;
         }
     };
 
+    // DetectionHook: forces NPC to "see" its hate-based focus target within range.
+    // -1000 suppression on non-focus targets is intentionally retained:
+    //   Without it, vanilla combat AI prefers closer targets, ignoring the distant ranged attacker.
+    // The infinite-chase bug is fixed by capping force-detection to kForceDetectRange:
+    //   When the player flees beyond this range, focus is not force-detected → vanilla clears target
+    //   → focus is cleared → suppression stops → faction NPCs naturally resume fighting each other.
     struct DetectionHook {
-        static std::uint8_t* thunk(RE::Actor* a_source, RE::Actor* a_target, std::int32_t& a_detectionValue, std::uint8_t& a_unk04, std::uint8_t& a_unk05, std::uint32_t& a_unk06, RE::NiPoint3& a_pos, float& a_unk08, float& a_unk09, float& a_unk10)
+        // Beyond this distance, force-detection is not applied.
+        // Vanilla's natural escape/disengage logic takes over.
+        static constexpr float kForceDetectRange = 3000.0f;
+
+        static std::uint8_t* thunk(RE::Actor* a_source, RE::Actor* a_target,
+            std::int32_t& a_detectionValue, std::uint8_t& a_unk04, std::uint8_t& a_unk05,
+            std::uint32_t& a_unk06, RE::NiPoint3& a_pos, float& a_unk08, float& a_unk09, float& a_unk10)
         {
             if (a_source && a_target) {
                 RE::FormID focus = Threat::ThreatManager::GetSingleton()->GetFocus(a_source->GetFormID());
                 if (focus != 0) {
                     if (a_target->GetFormID() == focus) {
                         auto result = func(a_source, a_target, a_detectionValue, a_unk04, a_unk05, a_unk06, a_pos, a_unk08, a_unk09, a_unk10);
-                        a_detectionValue = 1000; // Force detected
+                        float dist = a_source->GetPosition().GetDistance(a_target->GetPosition());
+                        // Only boost if:
+                        //   1. Within combat range (not an escaping actor)
+                        //   2. Vanilla already determined the target IS detectable (positive value).
+                        //      If vanilla returns negative (sneaking, behind wall, not yet found),
+                        //      we respect that and do not override.
+                        if (dist < kForceDetectRange && a_detectionValue > 0) {
+                            a_detectionValue = 1000;
+                        }
                         return result;
                     } else {
-                        a_detectionValue = -1000; // Hide others
-                        return nullptr;
+                        // Only suppress non-focus targets when focus is a ranged attacker (far away).
+                        // If focus is in melee range, skip suppression so new actors (e.g. player
+                        // joining mid-fight) can be detected normally by vanilla.
+                        auto focusActor = RE::TESForm::LookupByID<RE::Actor>(focus);
+                        float focusDist = focusActor
+                            ? a_source->GetPosition().GetDistance(focusActor->GetPosition())
+                            : Threat::ThreatManager::kMidRange; // treat missing as far
+                        if (focusDist > Threat::ThreatManager::kNearRange) {
+                            a_detectionValue = -1000;
+                            return nullptr;
+                        }
+                        // Focus is nearby: allow vanilla to detect all actors naturally
                     }
                 }
             }
@@ -97,22 +135,13 @@ namespace Hook {
         static inline REL::Relocation<decltype(thunk)> func;
 
         static void Install() {
-            // RELOCATION_ID(41659, 42742), OFFSET(0x526, 0x67B)
             REL::Relocation<std::uintptr_t> target{ REL::VariantID(41659, 42742, 0) };
-            
-            // We want to hook the CALL to this function, or the function itself?
-            // PapyrusExtender hooks the call site at OFFSET(0x526, 0x67B).
-            // Let's find where that offset is. It's usually in a detection loop.
-            // For stability, let's hook the call site like PapyrusExtender.
-            
             uintptr_t hookAddr = target.address() + REL::Relocate(0x526, 0x67B, 0);
-            
             auto& trampoline = SKSE::GetTrampoline();
             func = trampoline.write_call<5>(hookAddr, thunk);
             SKSE::log::info("Installed Detection Hook at {:X}", hookAddr);
         }
     };
-
     class ActorHook {
     public:
         static void Install() {
@@ -128,25 +157,46 @@ namespace Hook {
             _UpdateCombat(a_this);
 
             if (!a_this || a_this->IsDead()) {
+                if (a_this) Threat::ThreatManager::GetSingleton()->ClearHate(a_this->GetFormID());
                 return;
+            }
+
+            RE::FormID victimID = a_this->GetFormID();
+
+            // Handle Decay
+            auto now = std::chrono::steady_clock::now();
+            float deltaTime = 0.0f;
+            {
+                std::lock_guard<std::mutex> lock(_updateMutex);
+                auto it = _lastUpdateMap.find(victimID);
+                if (it != _lastUpdateMap.end()) {
+                    deltaTime = std::chrono::duration<float>(now - it->second).count();
+                }
+                _lastUpdateMap[victimID] = now;
+            }
+
+            if (deltaTime > 0.0f) {
+                Threat::ThreatManager::GetSingleton()->ApplyDecay(victimID, deltaTime);
             }
 
             // Detect damage via health delta since last hit
             float currentHealth = a_this->AsActorValueOwner()->GetActorValue(RE::ActorValue::kHealth);
             RE::FormID attackerID;
             float damage;
-            if (HitTracker::GetSingleton()->GetAndClearDamage(a_this->GetFormID(), currentHealth, attackerID, damage)) {
+            if (HitTracker::GetSingleton()->GetAndClearDamage(victimID, currentHealth, attackerID, damage)) {
                 if (damage > 0.0f) {
-                    /*SKSE::log::info(FMT_STRING("[Damage] Victim={:X}, Attacker={:X}, Amount={:.1f}"),
-                        a_this->GetFormID(), attackerID, damage);*/
-                    
-                    Threat::ThreatManager::GetSingleton()->AddDamage(a_this->GetFormID(), attackerID, damage);
+                    auto attacker = RE::TESForm::LookupByID<RE::Actor>(attackerID);
+                    float dist = attacker ? a_this->GetPosition().GetDistance(attacker->GetPosition()) : 0.0f;
+                    Threat::ThreatManager::GetSingleton()->AddDamage(victimID, attackerID, damage, dist);
                 }
             }
 
             // Target Switching Logic (only for NPCs)
             if (a_this->IsPlayerRef() || !a_this->IsInCombat()) {
-                Threat::ThreatManager::GetSingleton()->ClearFocus(a_this->GetFormID());
+                Threat::ThreatManager::GetSingleton()->ClearFocus(victimID);
+                if (!a_this->IsPlayerRef() && !a_this->IsInCombat()) {
+                    Threat::ThreatManager::GetSingleton()->ClearHate(victimID);
+                }
                 return;
             }
 
@@ -157,6 +207,14 @@ namespace Hook {
 
             auto& runtimeData = a_this->GetActorRuntimeData();
             auto currentTarget = runtimeData.currentCombatTarget.get();
+
+            // If the vanilla engine cleared the target (e.g., player fled out of detection range),
+            // respect that decision and do not force a new target via hate scores alone.
+            // This allows vanilla faction-vs-faction combat to resume naturally.
+            if (!currentTarget) {
+                Threat::ThreatManager::GetSingleton()->ClearFocus(victimID);
+                return;
+            }
             
             std::vector<Threat::TargetCandidate> candidates;
             {
@@ -178,13 +236,12 @@ namespace Hook {
                     runtimeData.combatController->targetHandle = bestTarget->GetHandle();
                     runtimeData.combatController->previousTargetHandle = currentTarget ? currentTarget->GetHandle() : RE::ActorHandle();
                 }
-
-                /*SKSE::log::info(FMT_STRING("[TargetSwitch] {:X} switched target to {:X}"),
-                    a_this->GetFormID(), bestTarget->GetFormID());*/
             }
         }
 
         static inline REL::Relocation<decltype(UpdateCombat)> _UpdateCombat;
+        static inline std::unordered_map<RE::FormID, std::chrono::steady_clock::time_point> _lastUpdateMap;
+        static inline std::mutex _updateMutex;
     };
 
     void Install() {

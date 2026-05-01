@@ -3,6 +3,8 @@
 #include <unordered_map>
 #include <deque>
 #include <mutex>
+#include "RE/A/Actor.h"
+#include "RE/N/NiSmartPointer.h"
 
 namespace Threat {
     struct DamageRecord {
@@ -22,10 +24,13 @@ namespace Threat {
             return &singleton;
         }
 
-        void AddDamage(RE::FormID a_targetID, RE::FormID a_attackerID, float a_damage);
-        float GetDPS(RE::FormID a_targetID, RE::FormID a_attackerID);
-        float GetThreatScore(RE::FormID a_targetID, RE::FormID a_attackerID, float a_distance, bool a_isClosest);
+        void AddDamage(RE::FormID a_targetID, RE::FormID a_attackerID, float a_damage, float a_distance);
+        void AddBashHate(RE::FormID a_targetID, RE::FormID a_attackerID, float a_distance);
+        float GetHate(RE::FormID a_targetID, RE::FormID a_attackerID);
         
+        void ApplyDecay(RE::FormID a_targetID, float a_deltaTime);
+        void ClearHate(RE::FormID a_targetID);
+
         // Target Selection and Focus
         RE::Actor* EvaluateBestTarget(RE::Actor* a_observer, RE::Actor* a_currentTarget, const std::vector<TargetCandidate>& a_candidates);
         RE::FormID GetFocus(RE::FormID a_observerID);
@@ -38,18 +43,18 @@ namespace Threat {
         static constexpr float kNearRange = 800.0f;
         static constexpr float kMidRange = 2000.0f;
         static constexpr float kSwitchThreshold = 0.15f;
+        static constexpr float kBashHateValue = 50.0f;
+        static constexpr float kHateHalfLife = 30.0f;
 
     private:
         ThreatManager() = default;
 
-        // TargetID -> AttackerID -> Deque of DamageRecords
-        std::unordered_map<RE::FormID, std::unordered_map<RE::FormID, std::deque<DamageRecord>>> _data;
+        // TargetID (Victim) -> AttackerID -> Cumulative Hate
+        std::unordered_map<RE::FormID, std::unordered_map<RE::FormID, float>> _hateTable;
         
         // ObserverID -> Focused TargetID
         std::unordered_map<RE::FormID, RE::FormID> _focusMap;
         
         std::mutex _mutex;
-
-        const float _windowSeconds = 10.0f;
     };
 }
