@@ -175,7 +175,7 @@ namespace Hook {
                 }
             }
 
-            // Handle Decay and AI processing throttle
+            // Handle Decay and AI processing
             auto now = std::chrono::steady_clock::now();
             float deltaTime = 0.0f;
             {
@@ -183,15 +183,7 @@ namespace Hook {
                 auto it = _lastUpdateMap.find(victimID);
                 if (it != _lastUpdateMap.end()) {
                     deltaTime = std::chrono::duration<float>(now - it->second).count();
-                    
-                    // Throttling: Only run custom AI evaluation every 0.25 seconds.
-                    // Running this every frame for multiple followers causes severe lock contention
-                    // and AI starvation (frozen actors).
-                    if (deltaTime < 0.25f) {
-                        return;
-                    }
                 }
-                
                 _lastUpdateMap[victimID] = now;
             }
 
