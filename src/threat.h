@@ -37,7 +37,7 @@ namespace Threat {
         static constexpr float kNearRange = 800.0f;
         static constexpr float kMidRange = 2000.0f;
         static constexpr float kSwitchThreshold = 0.15f;
-        static constexpr float kBashHateValue = 100.0f;
+        static constexpr float kBashHateValue = 50.0f;
         static constexpr float kHateHalfLife = 30.0f;
 
     private:

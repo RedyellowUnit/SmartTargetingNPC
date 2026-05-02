@@ -56,9 +56,7 @@ namespace Threat {
 
         RE::FormID observerID = a_observer->GetFormID();
 
-        // Always find the closest candidate and give them Base Threat as a minimum effective hate.
-        // This ensures a newly-detected actor (e.g. player joining mid-fight) with no accumulated hate
-        // can still become the target if they are the closest, matching proximity-based targeting intent.
+        // Identify the closest candidate to ensure proximity-based priority for new or low-hate actors.
         RE::Actor* closestCandidate = nullptr;
         float minDist = 1000000.0f;
         for (const auto& cand : a_candidates) {
@@ -85,6 +83,8 @@ namespace Threat {
             }
 
             for (const auto& candidate : a_candidates) {
+                if (!candidate.actor || candidate.actor->IsDeleted() || candidate.actor->IsDead()) continue;
+
                 float hate = 0.0f;
                 if (itObserver != itHateTableEnd) {
                     auto itCand = itObserver->second.find(candidate.actor->GetFormID());
@@ -93,9 +93,7 @@ namespace Threat {
                     }
                 }
 
-                // Give Base Threat to the closest candidate as a minimum.
-                // For existing targets with high accumulated hate, this has no effect.
-                // For new actors with 0 hate, this makes them competitive when closest.
+                // Apply base proximity threat for the nearest candidate to prevent targets with zero accumulated hate from being ignored.
                 if (closestCandidate && candidate.actor.get() == closestCandidate) {
                     float proximityHate = kBaseThreat * GetDistanceWeight(candidate.distance);
                     hate = std::max(hate, proximityHate);
@@ -108,7 +106,7 @@ namespace Threat {
             }
         }
 
-        // Switching Logic
+        // Logic to determine if a target switch is necessary based on hate accumulation thresholds.
         if (bestTarget && bestTarget != a_currentTarget) {
             float hateDiff = bestHate - currentHate;
             if (hateDiff > 0.1f || (currentHate > 0 && hateDiff / currentHate > kSwitchThreshold)) {

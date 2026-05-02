@@ -11,12 +11,6 @@
 #include <vector>
 
 namespace Hook {
-    struct LastHitData {
-        RE::FormID attackerID;
-        float lastHealth;
-        std::chrono::steady_clock::time_point timestamp;
-    };
-
     class HitTracker {
     public:
         static HitTracker* GetSingleton() {
@@ -24,36 +18,39 @@ namespace Hook {
             return &singleton;
         }
 
-        void RegisterHit(RE::FormID a_victim, RE::FormID a_attacker, float a_currentHealth) {
+        void RegisterHit(RE::FormID a_victim, RE::FormID a_attacker) {
             std::lock_guard<std::mutex> lock(_mutex);
-            _lastHits[a_victim] = { a_attacker, a_currentHealth, std::chrono::steady_clock::now() };
+            auto now = std::chrono::steady_clock::now();
+            auto it = _lastHits.find(a_victim);
+
+            // Throttle hit registration from the same attacker (100ms) 
+            // to reduce processing overhead during high-frequency hit events (e.g., Flame concentration spells).
+            if (it != _lastHits.end() && it->second.attackerID == a_attacker) {
+                if (std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second.timestamp).count() < 100) {
+                    return;
+                }
+            }
+            _lastHits[a_victim] = { a_attacker, now };
         }
 
-        bool GetAndClearDamage(RE::FormID a_victim, float a_currentHealth, RE::FormID& out_attacker, float& out_damage) {
+        RE::FormID GetLastAttacker(RE::FormID a_victim) {
             std::lock_guard<std::mutex> lock(_mutex);
             auto it = _lastHits.find(a_victim);
             if (it != _lastHits.end()) {
-                auto& data = it->second;
-                
-                // If health dropped since the last hit/check
-                if (a_currentHealth < data.lastHealth) {
-                    out_damage = data.lastHealth - a_currentHealth;
-                    out_attacker = data.attackerID;
-                    data.lastHealth = a_currentHealth;
-                    return true;
-                }
-                
-                // Timeout hit data after 5 seconds to avoid misattribution
                 auto now = std::chrono::steady_clock::now();
-                if (std::chrono::duration_cast<std::chrono::seconds>(now - data.timestamp).count() > 5) {
-                    _lastHits.erase(it);
+                if (std::chrono::duration_cast<std::chrono::seconds>(now - it->second.timestamp).count() <= 5) {
+                    return it->second.attackerID;
                 }
             }
-            return false;
+            return 0;
         }
 
     private:
-        std::unordered_map<RE::FormID, LastHitData> _lastHits;
+        struct HitRecord {
+            RE::FormID attackerID;
+            std::chrono::steady_clock::time_point timestamp;
+        };
+        std::unordered_map<RE::FormID, HitRecord> _lastHits;
         std::mutex _mutex;
     };
 
@@ -69,8 +66,7 @@ namespace Hook {
                 auto victim = a_event->target->As<RE::Actor>();
                 auto attacker = a_event->cause->As<RE::Actor>();
                 if (victim && attacker) {
-                    float health = victim->AsActorValueOwner()->GetActorValue(RE::ActorValue::kHealth);
-                    HitTracker::GetSingleton()->RegisterHit(victim->GetFormID(), attacker->GetFormID(), health);
+                    HitTracker::GetSingleton()->RegisterHit(victim->GetFormID(), attacker->GetFormID());
 
                     // New: Bash Detection
                     if (a_event->flags.any(RE::TESHitEvent::Flag::kBashAttack)) {
@@ -84,14 +80,9 @@ namespace Hook {
     };
 
     // DetectionHook: forces NPC to "see" its hate-based focus target within range.
-    // -1000 suppression on non-focus targets is intentionally retained:
-    //   Without it, vanilla combat AI prefers closer targets, ignoring the distant ranged attacker.
-    // The infinite-chase bug is fixed by capping force-detection to kForceDetectRange:
-    //   When the player flees beyond this range, focus is not force-detected → vanilla clears target
-    //   → focus is cleared → suppression stops → faction NPCs naturally resume fighting each other.
+    // -1000 suppression on non-focus targets is intentionally retained.
+    // Fixed: Always returns the original engine function's result to prevent stack/register corruption (CTD).
     struct DetectionHook {
-        // Beyond this distance, force-detection is not applied.
-        // Vanilla's natural escape/disengage logic takes over.
         static constexpr float kForceDetectRange = 3000.0f;
 
         static std::uint8_t* thunk(RE::Actor* a_source, RE::Actor* a_target,
@@ -102,30 +93,30 @@ namespace Hook {
                 RE::FormID focus = Threat::ThreatManager::GetSingleton()->GetFocus(a_source->GetFormID());
                 if (focus != 0) {
                     if (a_target->GetFormID() == focus) {
+                        // Priority Target: Force-detect the actor to keep the NPC focused on high-threat targets.
                         auto result = func(a_source, a_target, a_detectionValue, a_unk04, a_unk05, a_unk06, a_pos, a_unk08, a_unk09, a_unk10);
                         float dist = a_source->GetPosition().GetDistance(a_target->GetPosition());
-                        // Only boost if:
-                        //   1. Within combat range (not an escaping actor)
-                        //   2. Vanilla already determined the target IS detectable (positive value).
-                        //      If vanilla returns negative (sneaking, behind wall, not yet found),
-                        //      we respect that and do not override.
+                        
                         if (dist < kForceDetectRange && a_detectionValue > 0) {
                             a_detectionValue = 1000;
                         }
                         return result;
                     } else {
-                        // Only suppress non-focus targets when focus is a ranged attacker (far away).
-                        // If focus is in melee range, skip suppression so new actors (e.g. player
-                        // joining mid-fight) can be detected normally by vanilla.
+                        // Non-Focus Target: Suppress detection if the current primary focus is still at a distance.
+                        // This prevents the NPC from being easily distracted by closer, lower-threat enemies.
                         auto focusActor = RE::TESForm::LookupByID<RE::Actor>(focus);
                         float focusDist = focusActor
                             ? a_source->GetPosition().GetDistance(focusActor->GetPosition())
-                            : Threat::ThreatManager::kMidRange; // treat missing as far
+                            : Threat::ThreatManager::kMidRange;
+                        
+                        // CRITICAL: We must ALWAYS execute and return the result of the original engine function (func).
+                        // Bypassing 'func' or returning nullptr causes register corruption (RAX holding garbage)
+                        // leading to physics/Havok CTDs during high-frequency hit events.
+                        auto result = func(a_source, a_target, a_detectionValue, a_unk04, a_unk05, a_unk06, a_pos, a_unk08, a_unk09, a_unk10);
                         if (focusDist > Threat::ThreatManager::kNearRange) {
                             a_detectionValue = -1000;
-                            return nullptr;
                         }
-                        // Focus is nearby: allow vanilla to detect all actors naturally
+                        return result;
                     }
                 }
             }
@@ -142,14 +133,16 @@ namespace Hook {
             SKSE::log::info("Installed Detection Hook at {:X}", hookAddr);
         }
     };
+
     class ActorHook {
     public:
         static void Install() {
-            // Hook UpdateCombat (VTable index 0xE4) - Confirmed working
+            // Hook Actor VTable
+            // Index 0xE4: UpdateCombat
             REL::Relocation<std::uintptr_t> characterVtable{ RE::VTABLE_Character[0] };
             _UpdateCombat = characterVtable.write_vfunc(0xE4, UpdateCombat);
 
-            SKSE::log::info("Hooked UpdateCombat (VTable[0])");
+            SKSE::log::info("Hooked UpdateCombat (VTable[0xE4])");
         }
 
     private:
@@ -163,15 +156,27 @@ namespace Hook {
 
             RE::FormID victimID = a_this->GetFormID();
 
-            // Detect damage via health delta since last hit
+            // Detect damage via health delta
             float currentHealth = a_this->AsActorValueOwner()->GetActorValue(RE::ActorValue::kHealth);
-            RE::FormID attackerID;
-            float damage;
-            if (HitTracker::GetSingleton()->GetAndClearDamage(victimID, currentHealth, attackerID, damage)) {
-                if (damage > 0.0f) {
+            float lastHealth = currentHealth;
+            {
+                std::lock_guard<std::mutex> lock(_updateMutex);
+                auto itHealth = _actorHealthMap.find(victimID);
+                if (itHealth != _actorHealthMap.end()) {
+                    lastHealth = itHealth->second;
+                }
+                _actorHealthMap[victimID] = currentHealth;
+            }
+
+            float damage = lastHealth - currentHealth;
+            if (damage > 0.0f) {
+                RE::FormID attackerID = HitTracker::GetSingleton()->GetLastAttacker(victimID);
+                if (attackerID != 0) {
                     auto attacker = RE::TESForm::LookupByID<RE::Actor>(attackerID);
-                    float dist = attacker ? a_this->GetPosition().GetDistance(attacker->GetPosition()) : 0.0f;
-                    Threat::ThreatManager::GetSingleton()->AddDamage(victimID, attackerID, damage, dist);
+                    if (attacker) {
+                        float dist = a_this->GetPosition().GetDistance(attacker->GetPosition());
+                        Threat::ThreatManager::GetSingleton()->AddDamage(victimID, attackerID, damage, dist);
+                    }
                 }
             }
 
@@ -242,6 +247,7 @@ namespace Hook {
 
         static inline REL::Relocation<decltype(UpdateCombat)> _UpdateCombat;
         static inline std::unordered_map<RE::FormID, std::chrono::steady_clock::time_point> _lastUpdateMap;
+        static inline std::unordered_map<RE::FormID, float> _actorHealthMap;
         static inline std::mutex _updateMutex;
     };
 
