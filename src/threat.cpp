@@ -13,7 +13,7 @@ namespace Threat {
     void ThreatManager::AddDamage(RE::FormID a_targetID, RE::FormID a_attackerID, float a_damage, float a_distance) {
         if (a_damage <= 0.0f) return;
 
-        std::lock_guard<std::mutex> lock(_mutex);
+        std::unique_lock<std::shared_mutex> lock(_hateMutex);
         float weightedDamage = a_damage * GetDistanceWeight(a_distance);
         _hateTable[a_targetID][a_attackerID] += weightedDamage;
 
@@ -22,7 +22,7 @@ namespace Threat {
     }
 
     void ThreatManager::AddBashHate(RE::FormID a_targetID, RE::FormID a_attackerID, float a_distance) {
-        std::lock_guard<std::mutex> lock(_mutex);
+        std::unique_lock<std::shared_mutex> lock(_hateMutex);
         float weightedBash = kBashHateValue * GetDistanceWeight(a_distance);
         _hateTable[a_targetID][a_attackerID] += weightedBash;
 
@@ -30,22 +30,10 @@ namespace Threat {
             a_targetID, a_attackerID, weightedBash, _hateTable[a_targetID][a_attackerID]);*/
     }
 
-    float ThreatManager::GetHate(RE::FormID a_targetID, RE::FormID a_attackerID) {
-        std::lock_guard<std::mutex> lock(_mutex);
-        auto itTarget = _hateTable.find(a_targetID);
-        if (itTarget != _hateTable.end()) {
-            auto itAttacker = itTarget->second.find(a_attackerID);
-            if (itAttacker != itTarget->second.end()) {
-                return itAttacker->second;
-            }
-        }
-        return 0.0f;
-    }
-
     void ThreatManager::ApplyDecay(RE::FormID a_targetID, float a_deltaTime) {
         if (a_deltaTime <= 0.0f) return;
 
-        std::lock_guard<std::mutex> lock(_mutex);
+        std::unique_lock<std::shared_mutex> lock(_hateMutex);
         auto itTarget = _hateTable.find(a_targetID);
         if (itTarget == _hateTable.end()) return;
 
@@ -56,7 +44,7 @@ namespace Threat {
     }
 
     void ThreatManager::ClearHate(RE::FormID a_targetID) {
-        std::lock_guard<std::mutex> lock(_mutex);
+        std::unique_lock<std::shared_mutex> lock(_hateMutex);
         _hateTable.erase(a_targetID);
     }
 
@@ -68,9 +56,7 @@ namespace Threat {
 
         RE::FormID observerID = a_observer->GetFormID();
 
-        // Always find the closest candidate and give them Base Threat as a minimum effective hate.
-        // This ensures a newly-detected actor (e.g. player joining mid-fight) with no accumulated hate
-        // can still become the target if they are the closest, matching proximity-based targeting intent.
+        // Identify the closest candidate to ensure proximity-based priority for new or low-hate actors.
         RE::Actor* closestCandidate = nullptr;
         float minDist = 1000000.0f;
         for (const auto& cand : a_candidates) {
@@ -80,29 +66,47 @@ namespace Threat {
             }
         }
 
-        float currentHate = a_currentTarget ? GetHate(observerID, a_currentTarget->GetFormID()) : 0.0f;
-
+        float currentHate = 0.0f;
         RE::Actor* bestTarget = nullptr;
         float bestHate = 0.0f;
 
-        for (const auto& candidate : a_candidates) {
-            float hate = GetHate(observerID, candidate.actor->GetFormID());
+        {
+            std::shared_lock<std::shared_mutex> lock(_hateMutex);
+            auto itObserver = _hateTable.find(observerID);
+            auto itHateTableEnd = _hateTable.end();
 
-            // Give Base Threat to the closest candidate as a minimum.
-            // For existing targets with high accumulated hate, this has no effect.
-            // For new actors with 0 hate, this makes them competitive when closest.
-            if (closestCandidate && candidate.actor.get() == closestCandidate) {
-                float proximityHate = kBaseThreat * GetDistanceWeight(candidate.distance);
-                hate = std::max(hate, proximityHate);
+            if (a_currentTarget && itObserver != _hateTable.end()) {
+                auto itTarget = itObserver->second.find(a_currentTarget->GetFormID());
+                if (itTarget != itObserver->second.end()) {
+                    currentHate = itTarget->second;
+                }
             }
 
-            if (!bestTarget || hate > bestHate) {
-                bestTarget = candidate.actor.get();
-                bestHate = hate;
+            for (const auto& candidate : a_candidates) {
+                if (!candidate.actor || candidate.actor->IsDeleted() || candidate.actor->IsDead()) continue;
+
+                float hate = 0.0f;
+                if (itObserver != itHateTableEnd) {
+                    auto itCand = itObserver->second.find(candidate.actor->GetFormID());
+                    if (itCand != itObserver->second.end()) {
+                        hate = itCand->second;
+                    }
+                }
+
+                // Apply base proximity threat for the nearest candidate to prevent targets with zero accumulated hate from being ignored.
+                if (closestCandidate && candidate.actor.get() == closestCandidate) {
+                    float proximityHate = kBaseThreat * GetDistanceWeight(candidate.distance);
+                    hate = std::max(hate, proximityHate);
+                }
+
+                if (!bestTarget || hate > bestHate) {
+                    bestTarget = candidate.actor.get();
+                    bestHate = hate;
+                }
             }
         }
 
-        // Switching Logic
+        // Logic to determine if a target switch is necessary based on hate accumulation thresholds.
         if (bestTarget && bestTarget != a_currentTarget) {
             float hateDiff = bestHate - currentHate;
             if (hateDiff > 0.1f || (currentHate > 0 && hateDiff / currentHate > kSwitchThreshold)) {
@@ -130,39 +134,19 @@ namespace Threat {
     }
 
     RE::FormID ThreatManager::GetFocus(RE::FormID a_observerID) {
-        std::lock_guard<std::mutex> lock(_mutex);
+        std::shared_lock<std::shared_mutex> lock(_focusMutex);
         auto it = _focusMap.find(a_observerID);
         return (it != _focusMap.end()) ? it->second : 0;
     }
 
     void ThreatManager::SetFocus(RE::FormID a_observerID, RE::FormID a_targetID) {
-        std::lock_guard<std::mutex> lock(_mutex);
+        std::unique_lock<std::shared_mutex> lock(_focusMutex);
         _focusMap[a_observerID] = a_targetID;
     }
 
     void ThreatManager::ClearFocus(RE::FormID a_observerID) {
-        std::lock_guard<std::mutex> lock(_mutex);
+        std::unique_lock<std::shared_mutex> lock(_focusMutex);
         _focusMap.erase(a_observerID);
     }
 
-    void ThreatManager::Cleanup() {
-        std::lock_guard<std::mutex> lock(_mutex);
-        
-        for (auto itTarget = _hateTable.begin(); itTarget != _hateTable.end();) {
-            auto& attackerMap = itTarget->second;
-            for (auto itAttacker = attackerMap.begin(); itAttacker != attackerMap.end();) {
-                if (itAttacker->second < 0.1f) {
-                    itAttacker = attackerMap.erase(itAttacker);
-                } else {
-                    ++itAttacker;
-                }
-            }
-
-            if (attackerMap.empty()) {
-                itTarget = _hateTable.erase(itTarget);
-            } else {
-                ++itTarget;
-            }
-        }
-    }
 }
