@@ -40,6 +40,9 @@ namespace Threat {
         static constexpr float kMidRange = 2000.0f;
         static constexpr float kSwitchThreshold = 0.15f;
         static constexpr float kHateHalfLife = 30.0f;
+        static constexpr float kTauntBonus = 10000.0f;
+        static constexpr float kExecutionerThreshold = 0.3f;
+        static constexpr float kExecutionerBonus = 500.0f;
 
     private:
         ThreatManager() = default;

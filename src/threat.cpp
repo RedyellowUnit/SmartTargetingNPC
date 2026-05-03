@@ -120,7 +120,22 @@ namespace Threat {
                 }
 
                 if (isTaunting) {
-                    hate += 100000.0f; // Massive bonus for taunt effects
+                    hate += kTauntBonus; // Bonus for taunt effects
+                }
+
+                // Executioner Bonus Logic for current target
+                if (a_currentTarget && candidate.actor.get() == a_currentTarget) {
+                    auto avOwner = candidate.actor->AsActorValueOwner();
+                    if (avOwner) {
+                        float currentHealth = avOwner->GetActorValue(RE::ActorValue::kHealth);
+                        float maxHealth = avOwner->GetBaseActorValue(RE::ActorValue::kHealth);
+                        if (maxHealth > 0.0f) {
+                            float healthRatio = currentHealth / maxHealth;
+                            if (healthRatio < kExecutionerThreshold) {
+                                hate += kExecutionerBonus;
+                            }
+                        }
+                    }
                 }
 
                 if (!bestTarget || hate > bestHate) {
@@ -136,10 +151,10 @@ namespace Threat {
             if (hateDiff > 0.1f || (currentHate > 0 && hateDiff / currentHate > kSwitchThreshold)) {
                 SetFocus(observerID, bestTarget->GetFormID());
                 
-                SKSE::log::info(FMT_STRING("[TargetSwitch] {:X} ({}) switched target to {:X} ({}) (Hate={:.1f}, Dist={:.1f})"),
+                /*SKSE::log::info(FMT_STRING("[TargetSwitch] {:X} ({}) switched target to {:X} ({}) (Hate={:.1f}, Dist={:.1f})"),
                     observerID, a_observer->GetDisplayFullName(), 
                     bestTarget->GetFormID(), bestTarget->GetDisplayFullName(),
-                    bestHate, a_observer->GetPosition().GetDistance(bestTarget->GetPosition()));
+                    bestHate, a_observer->GetPosition().GetDistance(bestTarget->GetPosition()));*/
 
                 return bestTarget;
             }
