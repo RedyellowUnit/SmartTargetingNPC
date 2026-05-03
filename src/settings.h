@@ -22,6 +22,7 @@ public:
         executionerBonus = (float)ini.GetDoubleValue("Hate", "fExecutionerBonus", 500.0);
         bashHateValue = (float)ini.GetDoubleValue("Hate", "fBashHateValue", 50.0);
         summonHateValue = (float)ini.GetDoubleValue("Hate", "fSummonHateValue", 100.0);
+        killTransferBonus = (float)ini.GetDoubleValue("Hate", "fKillTransferBonus", 200.0);
 
         // [Range]
         nearRange = (float)ini.GetDoubleValue("Range", "fNearRange", 800.0);
@@ -41,6 +42,7 @@ public:
     float executionerBonus = 500.0f;
     float bashHateValue = 50.0f;
     float summonHateValue = 100.0f;
+    float killTransferBonus = 200.0f;
 
     // Range
     float nearRange = 800.0f;

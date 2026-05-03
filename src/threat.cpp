@@ -207,7 +207,33 @@ namespace Threat {
         float distanceWeight = GetDistanceWeight(a_distance);
         float weightedSummon = Settings::GetSingleton()->summonHateValue * distanceWeight;
         AddHate(a_targetID, a_summonerID, weightedSummon);
-        SKSE::log::info(FMT_STRING("[Hate] Victim={:X} Attacker={:X} +{:.1f} (type=SummonAggro)"), a_targetID, a_summonerID, weightedSummon);
+        /*SKSE::log::info(FMT_STRING("[Hate] Victim={:X} Attacker={:X} +{:.1f} (type=SummonAggro)"), a_targetID, a_summonerID, weightedSummon);*/
+    }
+
+    void ThreatManager::ProcessDeathAggro(RE::Actor* a_victim, RE::Actor* a_killer) {
+        if (!a_victim || !a_killer) return;
+
+        auto combatGroup = a_killer->GetCombatGroup();
+        if (!combatGroup) return;
+
+        float bonus = Settings::GetSingleton()->killTransferBonus;
+        RE::FormID killerID = a_killer->GetFormID();
+
+        RE::BSReadLockGuard lock(combatGroup->lock);
+        for (auto& combatTarget : combatGroup->targets) {
+            auto observer = combatTarget.targetHandle.get();
+            if (!observer || observer->IsDead() || observer.get() == a_killer) continue;
+
+            // Check if the observer is an ally of the victim (not hostile to victim)
+            if (!observer->IsHostileToActor(a_victim)) {
+                float dist = observer->GetPosition().GetDistance(a_victim->GetPosition());
+                if (dist < Settings::GetSingleton()->midRange) {
+                    AddHate(observer->GetFormID(), killerID, bonus);
+                    /*SKSE::log::info(FMT_STRING("[Hate] Observer={:X} Killer={:X} +{:.1f} (type=DeathAggro, Victim={:X})"), 
+                        observer->GetFormID(), killerID, bonus, a_victim->GetFormID());*/
+                }
+            }
+        }
     }
 
 }

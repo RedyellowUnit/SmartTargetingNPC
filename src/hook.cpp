@@ -7,6 +7,7 @@
 #include "RE/C/CombatController.h"
 #include "RE/T/TESHitEvent.h"
 #include "RE/T/TESCombatEvent.h"
+#include "RE/T/TESDeathEvent.h"
 #include "RE/T/TESForm.h"
 #include "RE/S/ScriptEventSourceHolder.h"
 #include <mutex>
@@ -114,6 +115,39 @@ namespace Hook {
                     if (summoner && !summoner->IsDead()) {
                         float dist = actor1->GetPosition().GetDistance(summoner->GetPosition());
                         Threat::ThreatManager::GetSingleton()->ProcessSummonAggro(actor1->GetFormID(), summoner->GetFormID(), dist);
+                    }
+                }
+            }
+            return RE::BSEventNotifyControl::kContinue;
+        }
+    };
+
+    class DeathEventSink : public RE::BSTEventSink<RE::TESDeathEvent> {
+    public:
+        static DeathEventSink* GetSingleton() {
+            static DeathEventSink singleton;
+            return &singleton;
+        }
+
+        RE::BSEventNotifyControl ProcessEvent(const RE::TESDeathEvent* a_event, RE::BSTEventSource<RE::TESDeathEvent>*) override {
+            if (a_event && a_event->actorDying) {
+                auto victim = a_event->actorDying->As<RE::Actor>();
+                if (victim) {
+                    // Try to find the actual physical killer via HitTracker (last attacker within 5s)
+                    RE::FormID killerID = HitTracker::GetSingleton()->GetLastAttacker(victim->GetFormID());
+                    RE::Actor* killer = nullptr;
+                    
+                    if (killerID != 0) {
+                        killer = RE::TESForm::LookupByID<RE::Actor>(killerID);
+                    }
+                    
+                    // Fallback to engine's reported killer if tracker didn't find anyone
+                    if (!killer && a_event->actorKiller) {
+                        killer = a_event->actorKiller->As<RE::Actor>();
+                    }
+
+                    if (killer) {
+                        Threat::ThreatManager::GetSingleton()->ProcessDeathAggro(victim, killer);
                     }
                 }
             }
@@ -300,8 +334,10 @@ namespace Hook {
         if (source) {
             source->AddEventSink<RE::TESHitEvent>(HitEventSink::GetSingleton());
             source->AddEventSink<RE::TESCombatEvent>(CombatEventSink::GetSingleton());
+            source->AddEventSink<RE::TESDeathEvent>(DeathEventSink::GetSingleton());
             SKSE::log::info("Registered TESHitEvent Sink");
             SKSE::log::info("Registered TESCombatEvent Sink");
+            SKSE::log::info("Registered TESDeathEvent Sink");
         }
     }
 }

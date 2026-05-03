@@ -32,6 +32,7 @@ namespace Threat {
         void ProcessDamage(RE::FormID a_targetID, RE::FormID a_attackerID, float a_damage, float a_distance);
         void ProcessBash(RE::FormID a_targetID, RE::FormID a_attackerID, float a_distance);
         void ProcessSummonAggro(RE::FormID a_targetID, RE::FormID a_summonerID, float a_distance);
+        void ProcessDeathAggro(RE::Actor* a_victim, RE::Actor* a_killer);
 
         // Target Selection and Focus
         RE::Actor* EvaluateBestTarget(RE::Actor* a_observer, RE::Actor* a_currentTarget, const std::vector<TargetCandidate>& a_candidates);
