@@ -4,30 +4,29 @@
 #include <cmath>
 
 namespace Threat {
-    static float GetDistanceWeight(float a_distance) {
+    float ThreatManager::GetDistanceWeight(float a_distance) {
         if (a_distance < ThreatManager::kNearRange) return 1.0f;
         if (a_distance < ThreatManager::kMidRange) return 0.6f;
         return 0.3f;
     }
 
-    void ThreatManager::AddDamage(RE::FormID a_targetID, RE::FormID a_attackerID, float a_damage, float a_distance) {
-        if (a_damage <= 0.0f) return;
+    void ThreatManager::AddHate(RE::FormID a_targetID, RE::FormID a_attackerID, float a_amount) {
+        if (a_amount <= 0.0f) return;
 
         std::unique_lock<std::shared_mutex> lock(_hateMutex);
-        float weightedDamage = a_damage * GetDistanceWeight(a_distance);
-        _hateTable[a_targetID][a_attackerID] += weightedDamage;
-
-        /*SKSE::log::info(FMT_STRING("[Hate] Victim={:X} Attacker={:X} +{:.1f} (type=Damage) Total={:.1f}"),
-            a_targetID, a_attackerID, weightedDamage, _hateTable[a_targetID][a_attackerID]);*/
+        _hateTable[a_targetID][a_attackerID] += a_amount;
     }
 
-    void ThreatManager::AddBashHate(RE::FormID a_targetID, RE::FormID a_attackerID, float a_distance) {
-        std::unique_lock<std::shared_mutex> lock(_hateMutex);
-        float weightedBash = kBashHateValue * GetDistanceWeight(a_distance);
-        _hateTable[a_targetID][a_attackerID] += weightedBash;
-
-        /*SKSE::log::info(FMT_STRING("[Hate] Victim={:X} Attacker={:X} +{:.1f} (type=Bash) Total={:.1f}"),
-            a_targetID, a_attackerID, weightedBash, _hateTable[a_targetID][a_attackerID]);*/
+    float ThreatManager::GetHate(RE::FormID a_targetID, RE::FormID a_attackerID) {
+        std::shared_lock<std::shared_mutex> lock(_hateMutex);
+        auto itTarget = _hateTable.find(a_targetID);
+        if (itTarget != _hateTable.end()) {
+            auto itAttacker = itTarget->second.find(a_attackerID);
+            if (itAttacker != itTarget->second.end()) {
+                return itAttacker->second;
+            }
+        }
+        return 0.0f;
     }
 
     void ThreatManager::ApplyDecay(RE::FormID a_targetID, float a_deltaTime) {

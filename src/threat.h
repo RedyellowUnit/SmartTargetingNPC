@@ -21,8 +21,10 @@ namespace Threat {
             return &singleton;
         }
 
-        void AddDamage(RE::FormID a_targetID, RE::FormID a_attackerID, float a_damage, float a_distance);
-        void AddBashHate(RE::FormID a_targetID, RE::FormID a_attackerID, float a_distance);
+        static float GetDistanceWeight(float a_distance);
+
+        void AddHate(RE::FormID a_targetID, RE::FormID a_attackerID, float a_amount);
+        float GetHate(RE::FormID a_targetID, RE::FormID a_attackerID);
         
         void ApplyDecay(RE::FormID a_targetID, float a_deltaTime);
         void ClearHate(RE::FormID a_targetID);
@@ -37,7 +39,6 @@ namespace Threat {
         static constexpr float kNearRange = 800.0f;
         static constexpr float kMidRange = 2000.0f;
         static constexpr float kSwitchThreshold = 0.15f;
-        static constexpr float kBashHateValue = 50.0f;
         static constexpr float kHateHalfLife = 30.0f;
 
     private:

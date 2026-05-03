@@ -1,5 +1,6 @@
 #include "hook.h"
 #include "threat.h"
+#include "AggroManager.h"
 #include <SKSE/SKSE.h>
 #include "RE/A/Actor.h"
 #include "RE/C/CombatGroup.h"
@@ -71,7 +72,7 @@ namespace Hook {
                     // New: Bash Detection
                     if (a_event->flags.any(RE::TESHitEvent::Flag::kBashAttack)) {
                         float dist = victim->GetPosition().GetDistance(attacker->GetPosition());
-                        Threat::ThreatManager::GetSingleton()->AddBashHate(victim->GetFormID(), attacker->GetFormID(), dist);
+                        Aggro::AggroManager::GetSingleton()->ProcessBash(victim->GetFormID(), attacker->GetFormID(), dist);
                     }
                 }
             }
@@ -173,10 +174,8 @@ namespace Hook {
                 RE::FormID attackerID = HitTracker::GetSingleton()->GetLastAttacker(victimID);
                 if (attackerID != 0) {
                     auto attacker = RE::TESForm::LookupByID<RE::Actor>(attackerID);
-                    if (attacker) {
-                        float dist = a_this->GetPosition().GetDistance(attacker->GetPosition());
-                        Threat::ThreatManager::GetSingleton()->AddDamage(victimID, attackerID, damage, dist);
-                    }
+                    float dist = attacker ? a_this->GetPosition().GetDistance(attacker->GetPosition()) : 0.0f;
+                    Aggro::AggroManager::GetSingleton()->ProcessDamage(victimID, attackerID, damage, dist);
                 }
             }
 
