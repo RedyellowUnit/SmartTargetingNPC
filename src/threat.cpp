@@ -4,11 +4,13 @@
 #include "RE/T/TESForm.h"
 #include "RE/E/EffectSetting.h"
 #include "RE/M/MagicTarget.h"
+#include "settings.h"
 
 namespace Threat {
     float ThreatManager::GetDistanceWeight(float a_distance) {
-        if (a_distance < ThreatManager::kNearRange) return 1.0f;
-        if (a_distance < ThreatManager::kMidRange) return 0.6f;
+        auto settings = Settings::GetSingleton();
+        if (a_distance < settings->nearRange) return 1.0f;
+        if (a_distance < settings->midRange) return 0.6f;
         return 0.3f;
     }
 
@@ -38,7 +40,7 @@ namespace Threat {
         auto itTarget = _hateTable.find(a_targetID);
         if (itTarget == _hateTable.end()) return;
 
-        float decayFactor = std::pow(0.5f, a_deltaTime / kHateHalfLife);
+        float decayFactor = std::pow(0.5f, a_deltaTime / Settings::GetSingleton()->hateHalfLife);
         for (auto& [attackerID, hate] : itTarget->second) {
             hate *= decayFactor;
         }
@@ -107,7 +109,7 @@ namespace Threat {
 
                 // Apply base proximity threat for the nearest candidate to prevent targets with zero accumulated hate from being ignored.
                 if (closestCandidate && candidate.actor.get() == closestCandidate) {
-                    float proximityHate = kBaseThreat * GetDistanceWeight(candidate.distance);
+                    float proximityHate = Settings::GetSingleton()->baseThreat * GetDistanceWeight(candidate.distance);
                     hate = std::max(hate, proximityHate);
                 }
 
@@ -120,7 +122,7 @@ namespace Threat {
                 }
 
                 if (isTaunting) {
-                    hate += kTauntBonus; // Bonus for taunt effects
+                    hate += Settings::GetSingleton()->tauntBonus; // Bonus for taunt effects
                 }
 
                 // Executioner Bonus Logic for current target
@@ -131,8 +133,8 @@ namespace Threat {
                         float maxHealth = avOwner->GetBaseActorValue(RE::ActorValue::kHealth);
                         if (maxHealth > 0.0f) {
                             float healthRatio = currentHealth / maxHealth;
-                            if (healthRatio < kExecutionerThreshold) {
-                                hate += kExecutionerBonus;
+                            if (healthRatio < Settings::GetSingleton()->executionerThreshold) {
+                                hate += Settings::GetSingleton()->executionerBonus;
                             }
                         }
                     }
@@ -148,7 +150,7 @@ namespace Threat {
         // Logic to determine if a target switch is necessary based on hate accumulation thresholds.
         if (bestTarget && bestTarget != a_currentTarget) {
             float hateDiff = bestHate - currentHate;
-            if (hateDiff > 0.1f || (currentHate > 0 && hateDiff / currentHate > kSwitchThreshold)) {
+            if (hateDiff > 0.1f || (currentHate > 0 && hateDiff / currentHate > Settings::GetSingleton()->switchThreshold)) {
                 SetFocus(observerID, bestTarget->GetFormID());
                 
                 /*SKSE::log::info(FMT_STRING("[TargetSwitch] {:X} ({}) switched target to {:X} ({}) (Hate={:.1f}, Dist={:.1f})"),
@@ -197,13 +199,13 @@ namespace Threat {
 
     void ThreatManager::ProcessBash(RE::FormID a_targetID, RE::FormID a_attackerID, float a_distance) {
         float distanceWeight = GetDistanceWeight(a_distance);
-        float weightedBash = kBashHateValue * distanceWeight;
+        float weightedBash = Settings::GetSingleton()->bashHateValue * distanceWeight;
         AddHate(a_targetID, a_attackerID, weightedBash);
     }
 
     void ThreatManager::ProcessSummonAggro(RE::FormID a_targetID, RE::FormID a_summonerID, float a_distance) {
         float distanceWeight = GetDistanceWeight(a_distance);
-        float weightedSummon = kSummonHateValue * distanceWeight;
+        float weightedSummon = Settings::GetSingleton()->summonHateValue * distanceWeight;
         AddHate(a_targetID, a_summonerID, weightedSummon);
         SKSE::log::info(FMT_STRING("[Hate] Victim={:X} Attacker={:X} +{:.1f} (type=SummonAggro)"), a_targetID, a_summonerID, weightedSummon);
     }

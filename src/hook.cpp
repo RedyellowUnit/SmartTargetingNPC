@@ -1,5 +1,6 @@
 #include "hook.h"
 #include "threat.h"
+#include "settings.h"
 #include <SKSE/SKSE.h>
 #include "RE/A/Actor.h"
 #include "RE/C/CombatGroup.h"
@@ -124,7 +125,6 @@ namespace Hook {
     // -1000 suppression on non-focus targets is intentionally retained.
     // Fixed: Always returns the original engine function's result to prevent stack/register corruption (CTD).
     struct DetectionHook {
-        static constexpr float kForceDetectRange = 3000.0f;
 
         static std::uint8_t* thunk(RE::Actor* a_source, RE::Actor* a_target,
             std::int32_t& a_detectionValue, std::uint8_t& a_unk04, std::uint8_t& a_unk05,
@@ -138,7 +138,7 @@ namespace Hook {
                         auto result = func(a_source, a_target, a_detectionValue, a_unk04, a_unk05, a_unk06, a_pos, a_unk08, a_unk09, a_unk10);
                         float dist = a_source->GetPosition().GetDistance(a_target->GetPosition());
                         
-                        if (dist < kForceDetectRange && a_detectionValue > 0) {
+                        if (dist < Settings::GetSingleton()->forceDetectRange && a_detectionValue > 0) {
                             a_detectionValue = 1000;
                         }
                         return result;
@@ -148,13 +148,13 @@ namespace Hook {
                         auto focusActor = RE::TESForm::LookupByID<RE::Actor>(focus);
                         float focusDist = focusActor
                             ? a_source->GetPosition().GetDistance(focusActor->GetPosition())
-                            : Threat::ThreatManager::kMidRange;
+                            : Settings::GetSingleton()->midRange;
                         
                         // CRITICAL: We must ALWAYS execute and return the result of the original engine function (func).
                         // Bypassing 'func' or returning nullptr causes register corruption (RAX holding garbage)
                         // leading to physics/Havok CTDs during high-frequency hit events.
                         auto result = func(a_source, a_target, a_detectionValue, a_unk04, a_unk05, a_unk06, a_pos, a_unk08, a_unk09, a_unk10);
-                        if (focusDist > Threat::ThreatManager::kNearRange) {
+                        if (focusDist > Settings::GetSingleton()->nearRange) {
                             a_detectionValue = -1000;
                         }
                         return result;
