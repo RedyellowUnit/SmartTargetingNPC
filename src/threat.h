@@ -29,6 +29,10 @@ namespace Threat {
         void ApplyDecay(RE::FormID a_targetID, float a_deltaTime);
         void ClearHate(RE::FormID a_targetID);
 
+        void ProcessDamage(RE::FormID a_targetID, RE::FormID a_attackerID, float a_damage, float a_distance);
+        void ProcessBash(RE::FormID a_targetID, RE::FormID a_attackerID, float a_distance);
+        void ProcessSummonAggro(RE::FormID a_targetID, RE::FormID a_summonerID, float a_distance);
+
         // Target Selection and Focus
         RE::Actor* EvaluateBestTarget(RE::Actor* a_observer, RE::Actor* a_currentTarget, const std::vector<TargetCandidate>& a_candidates);
         RE::FormID GetFocus(RE::FormID a_observerID);
@@ -43,6 +47,8 @@ namespace Threat {
         static constexpr float kTauntBonus = 10000.0f;
         static constexpr float kExecutionerThreshold = 0.3f;
         static constexpr float kExecutionerBonus = 500.0f;
+        static constexpr float kBashHateValue = 50.0f;
+        static constexpr float kSummonHateValue = 100.0f;
 
     private:
         ThreatManager() = default;

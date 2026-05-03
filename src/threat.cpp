@@ -188,4 +188,24 @@ namespace Threat {
         _focusMap.erase(a_observerID);
     }
 
+    void ThreatManager::ProcessDamage(RE::FormID a_targetID, RE::FormID a_attackerID, float a_damage, float a_distance) {
+        if (a_damage <= 0.0f) return;
+        float distanceWeight = GetDistanceWeight(a_distance);
+        float weightedDamage = a_damage * distanceWeight;
+        AddHate(a_targetID, a_attackerID, weightedDamage);
+    }
+
+    void ThreatManager::ProcessBash(RE::FormID a_targetID, RE::FormID a_attackerID, float a_distance) {
+        float distanceWeight = GetDistanceWeight(a_distance);
+        float weightedBash = kBashHateValue * distanceWeight;
+        AddHate(a_targetID, a_attackerID, weightedBash);
+    }
+
+    void ThreatManager::ProcessSummonAggro(RE::FormID a_targetID, RE::FormID a_summonerID, float a_distance) {
+        float distanceWeight = GetDistanceWeight(a_distance);
+        float weightedSummon = kSummonHateValue * distanceWeight;
+        AddHate(a_targetID, a_summonerID, weightedSummon);
+        SKSE::log::info(FMT_STRING("[Hate] Victim={:X} Attacker={:X} +{:.1f} (type=SummonAggro)"), a_targetID, a_summonerID, weightedSummon);
+    }
+
 }

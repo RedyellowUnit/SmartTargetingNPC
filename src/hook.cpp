@@ -1,6 +1,5 @@
 #include "hook.h"
 #include "threat.h"
-#include "AggroManager.h"
 #include <SKSE/SKSE.h>
 #include "RE/A/Actor.h"
 #include "RE/C/CombatGroup.h"
@@ -74,7 +73,7 @@ namespace Hook {
                     // New: Bash Detection
                     if (a_event->flags.any(RE::TESHitEvent::Flag::kBashAttack)) {
                         float dist = victim->GetPosition().GetDistance(attacker->GetPosition());
-                        Aggro::AggroManager::GetSingleton()->ProcessBash(victim->GetFormID(), attacker->GetFormID(), dist);
+                        Threat::ThreatManager::GetSingleton()->ProcessBash(victim->GetFormID(), attacker->GetFormID(), dist);
                     }
                 }
             }
@@ -104,7 +103,7 @@ namespace Hook {
                     auto summoner = actor1->GetCommandingActor().get();
                     if (summoner && !summoner->IsDead()) {
                         float dist = actor2->GetPosition().GetDistance(summoner->GetPosition());
-                        Aggro::AggroManager::GetSingleton()->ProcessSummonAggro(actor2->GetFormID(), summoner->GetFormID(), dist);
+                        Threat::ThreatManager::GetSingleton()->ProcessSummonAggro(actor2->GetFormID(), summoner->GetFormID(), dist);
                     }
                 }
                 
@@ -113,7 +112,7 @@ namespace Hook {
                     auto summoner = actor2->GetCommandingActor().get();
                     if (summoner && !summoner->IsDead()) {
                         float dist = actor1->GetPosition().GetDistance(summoner->GetPosition());
-                        Aggro::AggroManager::GetSingleton()->ProcessSummonAggro(actor1->GetFormID(), summoner->GetFormID(), dist);
+                        Threat::ThreatManager::GetSingleton()->ProcessSummonAggro(actor1->GetFormID(), summoner->GetFormID(), dist);
                     }
                 }
             }
@@ -216,7 +215,7 @@ namespace Hook {
                 if (attackerID != 0) {
                     auto attacker = RE::TESForm::LookupByID<RE::Actor>(attackerID);
                     float dist = attacker ? a_this->GetPosition().GetDistance(attacker->GetPosition()) : 0.0f;
-                    Aggro::AggroManager::GetSingleton()->ProcessDamage(victimID, attackerID, damage, dist);
+                    Threat::ThreatManager::GetSingleton()->ProcessDamage(victimID, attackerID, damage, dist);
                 }
             }
 

@@ -5,5 +5,4 @@ set(headers ${headers}
     src/hook.h 
     src/settings.h
     src/threat.h
-    src/AggroManager.h
 )
