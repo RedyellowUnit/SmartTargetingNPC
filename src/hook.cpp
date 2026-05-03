@@ -6,7 +6,9 @@
 #include "RE/C/CombatGroup.h"
 #include "RE/C/CombatController.h"
 #include "RE/T/TESHitEvent.h"
+#include "RE/T/TESCombatEvent.h"
 #include "RE/T/TESForm.h"
+#include "RE/S/ScriptEventSourceHolder.h"
 #include <mutex>
 #include <unordered_map>
 #include <vector>
@@ -73,6 +75,45 @@ namespace Hook {
                     if (a_event->flags.any(RE::TESHitEvent::Flag::kBashAttack)) {
                         float dist = victim->GetPosition().GetDistance(attacker->GetPosition());
                         Aggro::AggroManager::GetSingleton()->ProcessBash(victim->GetFormID(), attacker->GetFormID(), dist);
+                    }
+                }
+            }
+            return RE::BSEventNotifyControl::kContinue;
+        }
+    };
+
+    class CombatEventSink : public RE::BSTEventSink<RE::TESCombatEvent> {
+    public:
+        static CombatEventSink* GetSingleton() {
+            static CombatEventSink singleton;
+            return &singleton;
+        }
+
+        RE::BSEventNotifyControl ProcessEvent(const RE::TESCombatEvent* a_event, RE::BSTEventSource<RE::TESCombatEvent>*) override {
+            if (a_event && a_event->newState == RE::ACTOR_COMBAT_STATE::kCombat) {
+                auto actor1Ptr = a_event->actor.get();
+                auto actor2Ptr = a_event->targetActor.get();
+                auto actor1 = actor1Ptr ? actor1Ptr->As<RE::Actor>() : nullptr;
+                auto actor2 = actor2Ptr ? actor2Ptr->As<RE::Actor>() : nullptr;
+
+                if (!actor1 || !actor2) return RE::BSEventNotifyControl::kContinue;
+
+                // Check both ways.
+                // If actor1 is the summon, actor2 is the NPC gaining hate towards the summoner.
+                if (actor1->IsCommandedActor()) {
+                    auto summoner = actor1->GetCommandingActor().get();
+                    if (summoner && !summoner->IsDead()) {
+                        float dist = actor2->GetPosition().GetDistance(summoner->GetPosition());
+                        Aggro::AggroManager::GetSingleton()->ProcessSummonAggro(actor2->GetFormID(), summoner->GetFormID(), dist);
+                    }
+                }
+                
+                // If actor2 is the summon, actor1 is the NPC gaining hate towards the summoner.
+                if (actor2->IsCommandedActor()) {
+                    auto summoner = actor2->GetCommandingActor().get();
+                    if (summoner && !summoner->IsDead()) {
+                        float dist = actor1->GetPosition().GetDistance(summoner->GetPosition());
+                        Aggro::AggroManager::GetSingleton()->ProcessSummonAggro(actor1->GetFormID(), summoner->GetFormID(), dist);
                     }
                 }
             }
@@ -259,7 +300,9 @@ namespace Hook {
         auto source = RE::ScriptEventSourceHolder::GetSingleton();
         if (source) {
             source->AddEventSink<RE::TESHitEvent>(HitEventSink::GetSingleton());
+            source->AddEventSink<RE::TESCombatEvent>(CombatEventSink::GetSingleton());
             SKSE::log::info("Registered TESHitEvent Sink");
+            SKSE::log::info("Registered TESCombatEvent Sink");
         }
     }
 }

@@ -13,8 +13,10 @@ namespace Aggro {
 
         void ProcessDamage(RE::FormID a_targetID, RE::FormID a_attackerID, float a_damage, float a_distance);
         void ProcessBash(RE::FormID a_targetID, RE::FormID a_attackerID, float a_distance);
+        void ProcessSummonAggro(RE::FormID a_targetID, RE::FormID a_summonerID, float a_distance);
 
         static constexpr float kBashHateValue = 50.0f;
+        static constexpr float kSummonHateValue = 10000.0f;
 
     private:
         AggroManager() = default;

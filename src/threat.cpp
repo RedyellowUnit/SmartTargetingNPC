@@ -1,7 +1,9 @@
 #include "threat.h"
 #include <SKSE/SKSE.h>
-#include <chrono>
 #include <cmath>
+#include "RE/T/TESForm.h"
+#include "RE/E/EffectSetting.h"
+#include "RE/M/MagicTarget.h"
 
 namespace Threat {
     float ThreatManager::GetDistanceWeight(float a_distance) {
@@ -53,6 +55,16 @@ namespace Threat {
             return nullptr;
         }
 
+        static RE::EffectSetting* courageEff = nullptr;
+        static RE::EffectSetting* allyEff = nullptr;
+        static bool initialized = false;
+
+        if (!initialized) {
+            courageEff = RE::TESForm::LookupByID<RE::EffectSetting>(0x0001EA79);
+            allyEff = RE::TESForm::LookupByID<RE::EffectSetting>(0x0001EA76);
+            initialized = true;
+        }
+
         RE::FormID observerID = a_observer->GetFormID();
 
         // Identify the closest candidate to ensure proximity-based priority for new or low-hate actors.
@@ -64,6 +76,7 @@ namespace Threat {
                 closestCandidate = cand.actor.get();
             }
         }
+
 
         float currentHate = 0.0f;
         RE::Actor* bestTarget = nullptr;
@@ -98,6 +111,18 @@ namespace Threat {
                     hate = std::max(hate, proximityHate);
                 }
 
+                // Courage / Ally Priority Logic for Target
+                bool isTaunting = false;
+                auto magicTargetCand = candidate.actor->As<RE::MagicTarget>();
+                if (magicTargetCand) {
+                    if (courageEff && magicTargetCand->HasMagicEffect(courageEff)) isTaunting = true;
+                    else if (allyEff && magicTargetCand->HasMagicEffect(allyEff)) isTaunting = true;
+                }
+
+                if (isTaunting) {
+                    hate += 100000.0f; // Massive bonus for taunt effects
+                }
+
                 if (!bestTarget || hate > bestHate) {
                     bestTarget = candidate.actor.get();
                     bestHate = hate;
@@ -111,10 +136,10 @@ namespace Threat {
             if (hateDiff > 0.1f || (currentHate > 0 && hateDiff / currentHate > kSwitchThreshold)) {
                 SetFocus(observerID, bestTarget->GetFormID());
                 
-                /*SKSE::log::info(FMT_STRING("[TargetSwitch] {:X} ({}) switched target to {:X} ({}) (Hate={:.1f}, Dist={:.1f})"),
+                SKSE::log::info(FMT_STRING("[TargetSwitch] {:X} ({}) switched target to {:X} ({}) (Hate={:.1f}, Dist={:.1f})"),
                     observerID, a_observer->GetDisplayFullName(), 
                     bestTarget->GetFormID(), bestTarget->GetDisplayFullName(),
-                    bestHate, a_observer->GetPosition().GetDistance(bestTarget->GetPosition()));*/
+                    bestHate, a_observer->GetPosition().GetDistance(bestTarget->GetPosition()));
 
                 return bestTarget;
             }
