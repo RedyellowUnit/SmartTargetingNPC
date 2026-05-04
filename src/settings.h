@@ -23,6 +23,7 @@ public:
         bashHateValue = (float)ini.GetDoubleValue("Hate", "fBashHateValue", 50.0);
         summonHateValue = (float)ini.GetDoubleValue("Hate", "fSummonHateValue", 100.0);
         killTransferBonus = (float)ini.GetDoubleValue("Hate", "fKillTransferBonus", 200.0);
+        dragonBonus = (float)ini.GetDoubleValue("Hate", "fDragonBonus", 1000000.0);
 
         // [Range]
         nearRange = (float)ini.GetDoubleValue("Range", "fNearRange", 800.0);
@@ -43,6 +44,7 @@ public:
     float bashHateValue = 50.0f;
     float summonHateValue = 100.0f;
     float killTransferBonus = 200.0f;
+    float dragonBonus = 1000000.0f;
 
     // Range
     float nearRange = 800.0f;

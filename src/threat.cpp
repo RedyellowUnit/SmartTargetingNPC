@@ -59,11 +59,13 @@ namespace Threat {
 
         static RE::EffectSetting* courageEff = nullptr;
         static RE::EffectSetting* allyEff = nullptr;
+        static RE::BGSKeyword* dragonKeyword = nullptr;
         static bool initialized = false;
 
         if (!initialized) {
             courageEff = RE::TESForm::LookupByID<RE::EffectSetting>(0x0001EA79);
             allyEff = RE::TESForm::LookupByID<RE::EffectSetting>(0x0001EA76);
+            dragonKeyword = RE::TESForm::LookupByID<RE::BGSKeyword>(0x00035D59);
             initialized = true;
         }
 
@@ -125,6 +127,11 @@ namespace Threat {
                     hate += Settings::GetSingleton()->tauntBonus; // Bonus for taunt effects
                 }
 
+                // Dragon Priority Logic
+                if (dragonKeyword && candidate.actor->HasKeyword(dragonKeyword)) {
+                    hate += Settings::GetSingleton()->dragonBonus;
+                }
+
                 // Executioner Bonus Logic for current target
                 if (a_currentTarget && candidate.actor.get() == a_currentTarget) {
                     auto avOwner = candidate.actor->AsActorValueOwner();
@@ -153,10 +160,10 @@ namespace Threat {
             if (hateDiff > 0.1f || (currentHate > 0 && hateDiff / currentHate > Settings::GetSingleton()->switchThreshold)) {
                 SetFocus(observerID, bestTarget->GetFormID());
                 
-                /*SKSE::log::info(FMT_STRING("[TargetSwitch] {:X} ({}) switched target to {:X} ({}) (Hate={:.1f}, Dist={:.1f})"),
+                SKSE::log::info(FMT_STRING("[TargetSwitch] {:X} ({}) switched target to {:X} ({}) (Hate={:.1f}, Dist={:.1f})"),
                     observerID, a_observer->GetDisplayFullName(), 
                     bestTarget->GetFormID(), bestTarget->GetDisplayFullName(),
-                    bestHate, a_observer->GetPosition().GetDistance(bestTarget->GetPosition()));*/
+                    bestHate, a_observer->GetPosition().GetDistance(bestTarget->GetPosition()));
 
                 return bestTarget;
             }
