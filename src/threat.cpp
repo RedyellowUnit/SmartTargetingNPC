@@ -125,11 +125,15 @@ namespace Threat {
 
                 if (isTaunting) {
                     hate += Settings::GetSingleton()->tauntBonus; // Bonus for taunt effects
+                    /*SKSE::log::info(FMT_STRING("[Hate] Courage={:X} Observer={:X}"),
+                        candidate.actor->GetFormID(), a_observer->GetFormID());*/
                 }
 
                 // Dragon Priority Logic
                 if (dragonKeyword && candidate.actor->HasKeyword(dragonKeyword)) {
                     hate += Settings::GetSingleton()->dragonBonus;
+                    /*SKSE::log::info(FMT_STRING("[Hate] Dragon={:X} Observer={:X}"),
+                        candidate.actor->GetFormID(), a_observer->GetFormID());*/
                 }
 
                 // Executioner Bonus Logic for current target
@@ -142,6 +146,8 @@ namespace Threat {
                             float healthRatio = currentHealth / maxHealth;
                             if (healthRatio < Settings::GetSingleton()->executionerThreshold) {
                                 hate += Settings::GetSingleton()->executionerBonus;
+                                /*SKSE::log::info(FMT_STRING("[Hate] HealthLow={:X} Observer={:X}"),
+                                    candidate.actor->GetFormID(), a_observer->GetFormID());*/
                             }
                         }
                     }
@@ -214,7 +220,7 @@ namespace Threat {
         float distanceWeight = GetDistanceWeight(a_distance);
         float weightedSummon = Settings::GetSingleton()->summonHateValue * distanceWeight;
         AddHate(a_targetID, a_summonerID, weightedSummon);
-        /*SKSE::log::info(FMT_STRING("[Hate] Victim={:X} Attacker={:X} +{:.1f} (type=SummonAggro)"), a_targetID, a_summonerID, weightedSummon);*/
+        //SKSE::log::info(FMT_STRING("[Hate] Victim={:X} Attacker={:X} +{:.1f} (type=SummonAggro)"), a_targetID, a_summonerID, weightedSummon);
     }
 
     void ThreatManager::ProcessDeathAggro(RE::Actor* a_victim, RE::Actor* a_killer) {
