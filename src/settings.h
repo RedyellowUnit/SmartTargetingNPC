@@ -21,8 +21,8 @@ public:
         executionerThreshold = (float)ini.GetDoubleValue("Hate", "fExecutionerThreshold", 0.3);
         executionerBonus = (float)ini.GetDoubleValue("Hate", "fExecutionerBonus", 500.0);
         bashHateValue = (float)ini.GetDoubleValue("Hate", "fBashHateValue", 50.0);
-        summonHateValue = (float)ini.GetDoubleValue("Hate", "fSummonHateValue", 100.0);
-        killTransferBonus = (float)ini.GetDoubleValue("Hate", "fKillTransferBonus", 200.0);
+        summonHateValue = (float)ini.GetDoubleValue("Hate", "fSummonHateValue", 300.0);
+        killTransferBonus = (float)ini.GetDoubleValue("Hate", "fKillTransferBonus", 500.0);
         dragonBonus = (float)ini.GetDoubleValue("Hate", "fDragonBonus", 1000000.0);
 
         // [Range]
@@ -42,8 +42,8 @@ public:
     float executionerThreshold = 0.3f;
     float executionerBonus = 500.0f;
     float bashHateValue = 50.0f;
-    float summonHateValue = 100.0f;
-    float killTransferBonus = 200.0f;
+    float summonHateValue = 300.0f;
+    float killTransferBonus = 500.0f;
     float dragonBonus = 1000000.0f;
 
     // Range
