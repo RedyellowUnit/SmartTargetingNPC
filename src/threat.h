@@ -21,11 +21,18 @@ namespace Threat {
             return &singleton;
         }
 
-        void AddDamage(RE::FormID a_targetID, RE::FormID a_attackerID, float a_damage, float a_distance);
-        void AddBashHate(RE::FormID a_targetID, RE::FormID a_attackerID, float a_distance);
+        static float GetDistanceWeight(float a_distance);
+
+        void AddHate(RE::FormID a_targetID, RE::FormID a_attackerID, float a_amount);
+        float GetHate(RE::FormID a_targetID, RE::FormID a_attackerID);
         
         void ApplyDecay(RE::FormID a_targetID, float a_deltaTime);
         void ClearHate(RE::FormID a_targetID);
+
+        void ProcessDamage(RE::FormID a_targetID, RE::FormID a_attackerID, float a_damage, float a_distance);
+        void ProcessBash(RE::FormID a_targetID, RE::FormID a_attackerID, float a_distance);
+        void ProcessSummonAggro(RE::FormID a_targetID, RE::FormID a_summonerID, float a_distance);
+        void ProcessDeathAggro(RE::Actor* a_victim, RE::Actor* a_killer);
 
         // Target Selection and Focus
         RE::Actor* EvaluateBestTarget(RE::Actor* a_observer, RE::Actor* a_currentTarget, const std::vector<TargetCandidate>& a_candidates);
@@ -33,12 +40,6 @@ namespace Threat {
         void SetFocus(RE::FormID a_observerID, RE::FormID a_targetID);
         void ClearFocus(RE::FormID a_observerID);
 
-        static constexpr float kBaseThreat = 5.0f;
-        static constexpr float kNearRange = 800.0f;
-        static constexpr float kMidRange = 2000.0f;
-        static constexpr float kSwitchThreshold = 0.15f;
-        static constexpr float kBashHateValue = 50.0f;
-        static constexpr float kHateHalfLife = 30.0f;
 
     private:
         ThreatManager() = default;

@@ -1,10 +1,12 @@
 #include "hook.h"
 #include "log.h"
+#include "settings.h"
 
 void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
 {
 	switch (a_msg->type) {
 	case SKSE::MessagingInterface::kDataLoaded:
+		Settings::GetSingleton()->Load();
 		Hook::RegisterEvents();
 		break;
 	case SKSE::MessagingInterface::kPostLoad:

@@ -1,11 +1,15 @@
 #include "hook.h"
 #include "threat.h"
+#include "settings.h"
 #include <SKSE/SKSE.h>
 #include "RE/A/Actor.h"
 #include "RE/C/CombatGroup.h"
 #include "RE/C/CombatController.h"
 #include "RE/T/TESHitEvent.h"
+#include "RE/T/TESCombatEvent.h"
+#include "RE/T/TESDeathEvent.h"
 #include "RE/T/TESForm.h"
+#include "RE/S/ScriptEventSourceHolder.h"
 #include <mutex>
 #include <unordered_map>
 #include <vector>
@@ -71,7 +75,79 @@ namespace Hook {
                     // New: Bash Detection
                     if (a_event->flags.any(RE::TESHitEvent::Flag::kBashAttack)) {
                         float dist = victim->GetPosition().GetDistance(attacker->GetPosition());
-                        Threat::ThreatManager::GetSingleton()->AddBashHate(victim->GetFormID(), attacker->GetFormID(), dist);
+                        Threat::ThreatManager::GetSingleton()->ProcessBash(victim->GetFormID(), attacker->GetFormID(), dist);
+                    }
+                }
+            }
+            return RE::BSEventNotifyControl::kContinue;
+        }
+    };
+
+    class CombatEventSink : public RE::BSTEventSink<RE::TESCombatEvent> {
+    public:
+        static CombatEventSink* GetSingleton() {
+            static CombatEventSink singleton;
+            return &singleton;
+        }
+
+        RE::BSEventNotifyControl ProcessEvent(const RE::TESCombatEvent* a_event, RE::BSTEventSource<RE::TESCombatEvent>*) override {
+            if (a_event && a_event->newState == RE::ACTOR_COMBAT_STATE::kCombat) {
+                auto actor1Ptr = a_event->actor.get();
+                auto actor2Ptr = a_event->targetActor.get();
+                auto actor1 = actor1Ptr ? actor1Ptr->As<RE::Actor>() : nullptr;
+                auto actor2 = actor2Ptr ? actor2Ptr->As<RE::Actor>() : nullptr;
+
+                if (!actor1 || !actor2) return RE::BSEventNotifyControl::kContinue;
+
+                // Check both ways.
+                // If actor1 is the summon, actor2 is the NPC gaining hate towards the summoner.
+                if (actor1->IsCommandedActor()) {
+                    auto summoner = actor1->GetCommandingActor().get();
+                    if (summoner && !summoner->IsDead()) {
+                        float dist = actor2->GetPosition().GetDistance(summoner->GetPosition());
+                        Threat::ThreatManager::GetSingleton()->ProcessSummonAggro(actor2->GetFormID(), summoner->GetFormID(), dist);
+                    }
+                }
+                
+                // If actor2 is the summon, actor1 is the NPC gaining hate towards the summoner.
+                if (actor2->IsCommandedActor()) {
+                    auto summoner = actor2->GetCommandingActor().get();
+                    if (summoner && !summoner->IsDead()) {
+                        float dist = actor1->GetPosition().GetDistance(summoner->GetPosition());
+                        Threat::ThreatManager::GetSingleton()->ProcessSummonAggro(actor1->GetFormID(), summoner->GetFormID(), dist);
+                    }
+                }
+            }
+            return RE::BSEventNotifyControl::kContinue;
+        }
+    };
+
+    class DeathEventSink : public RE::BSTEventSink<RE::TESDeathEvent> {
+    public:
+        static DeathEventSink* GetSingleton() {
+            static DeathEventSink singleton;
+            return &singleton;
+        }
+
+        RE::BSEventNotifyControl ProcessEvent(const RE::TESDeathEvent* a_event, RE::BSTEventSource<RE::TESDeathEvent>*) override {
+            if (a_event && a_event->actorDying) {
+                auto victim = a_event->actorDying->As<RE::Actor>();
+                if (victim) {
+                    // Try to find the actual physical killer via HitTracker (last attacker within 5s)
+                    RE::FormID killerID = HitTracker::GetSingleton()->GetLastAttacker(victim->GetFormID());
+                    RE::Actor* killer = nullptr;
+                    
+                    if (killerID != 0) {
+                        killer = RE::TESForm::LookupByID<RE::Actor>(killerID);
+                    }
+                    
+                    // Fallback to engine's reported killer if tracker didn't find anyone
+                    if (!killer && a_event->actorKiller) {
+                        killer = a_event->actorKiller->As<RE::Actor>();
+                    }
+
+                    if (killer) {
+                        Threat::ThreatManager::GetSingleton()->ProcessDeathAggro(victim, killer);
                     }
                 }
             }
@@ -83,7 +159,6 @@ namespace Hook {
     // -1000 suppression on non-focus targets is intentionally retained.
     // Fixed: Always returns the original engine function's result to prevent stack/register corruption (CTD).
     struct DetectionHook {
-        static constexpr float kForceDetectRange = 3000.0f;
 
         static std::uint8_t* thunk(RE::Actor* a_source, RE::Actor* a_target,
             std::int32_t& a_detectionValue, std::uint8_t& a_unk04, std::uint8_t& a_unk05,
@@ -97,7 +172,7 @@ namespace Hook {
                         auto result = func(a_source, a_target, a_detectionValue, a_unk04, a_unk05, a_unk06, a_pos, a_unk08, a_unk09, a_unk10);
                         float dist = a_source->GetPosition().GetDistance(a_target->GetPosition());
                         
-                        if (dist < kForceDetectRange && a_detectionValue > 0) {
+                        if (dist < Settings::GetSingleton()->forceDetectRange && a_detectionValue > 0) {
                             a_detectionValue = 1000;
                         }
                         return result;
@@ -107,13 +182,13 @@ namespace Hook {
                         auto focusActor = RE::TESForm::LookupByID<RE::Actor>(focus);
                         float focusDist = focusActor
                             ? a_source->GetPosition().GetDistance(focusActor->GetPosition())
-                            : Threat::ThreatManager::kMidRange;
+                            : Settings::GetSingleton()->midRange;
                         
                         // CRITICAL: We must ALWAYS execute and return the result of the original engine function (func).
                         // Bypassing 'func' or returning nullptr causes register corruption (RAX holding garbage)
                         // leading to physics/Havok CTDs during high-frequency hit events.
                         auto result = func(a_source, a_target, a_detectionValue, a_unk04, a_unk05, a_unk06, a_pos, a_unk08, a_unk09, a_unk10);
-                        if (focusDist > Threat::ThreatManager::kNearRange) {
+                        if (focusDist > Settings::GetSingleton()->nearRange) {
                             a_detectionValue = -1000;
                         }
                         return result;
@@ -173,10 +248,8 @@ namespace Hook {
                 RE::FormID attackerID = HitTracker::GetSingleton()->GetLastAttacker(victimID);
                 if (attackerID != 0) {
                     auto attacker = RE::TESForm::LookupByID<RE::Actor>(attackerID);
-                    if (attacker) {
-                        float dist = a_this->GetPosition().GetDistance(attacker->GetPosition());
-                        Threat::ThreatManager::GetSingleton()->AddDamage(victimID, attackerID, damage, dist);
-                    }
+                    float dist = attacker ? a_this->GetPosition().GetDistance(attacker->GetPosition()) : 0.0f;
+                    Threat::ThreatManager::GetSingleton()->ProcessDamage(victimID, attackerID, damage, dist);
                 }
             }
 
@@ -260,7 +333,11 @@ namespace Hook {
         auto source = RE::ScriptEventSourceHolder::GetSingleton();
         if (source) {
             source->AddEventSink<RE::TESHitEvent>(HitEventSink::GetSingleton());
+            source->AddEventSink<RE::TESCombatEvent>(CombatEventSink::GetSingleton());
+            source->AddEventSink<RE::TESDeathEvent>(DeathEventSink::GetSingleton());
             SKSE::log::info("Registered TESHitEvent Sink");
+            SKSE::log::info("Registered TESCombatEvent Sink");
+            SKSE::log::info("Registered TESDeathEvent Sink");
         }
     }
 }
