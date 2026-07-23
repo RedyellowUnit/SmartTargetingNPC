@@ -49,6 +49,11 @@ namespace Hook {
             return 0;
         }
 
+        void Reset() {
+            std::lock_guard<std::mutex> lock(_mutex);
+            _lastHits.clear();
+        }
+
     private:
         struct HitRecord {
             RE::FormID attackerID;
@@ -179,10 +184,14 @@ namespace Hook {
                     } else {
                         // Non-Focus Target: Suppress detection if the current primary focus is still at a distance.
                         // This prevents the NPC from being easily distracted by closer, lower-threat enemies.
+                        // Stale/invalid focus (e.g. after death+reload) must not suppress detection.
                         auto focusActor = RE::TESForm::LookupByID<RE::Actor>(focus);
-                        float focusDist = focusActor
-                            ? a_source->GetPosition().GetDistance(focusActor->GetPosition())
-                            : Settings::GetSingleton()->midRange;
+                        if (!focusActor || focusActor->IsDead() || focusActor->IsDeleted()) {
+                            Threat::ThreatManager::GetSingleton()->ClearFocus(a_source->GetFormID());
+                            return func(a_source, a_target, a_detectionValue, a_unk04, a_unk05, a_unk06, a_pos, a_unk08, a_unk09, a_unk10);
+                        }
+
+                        float focusDist = a_source->GetPosition().GetDistance(focusActor->GetPosition());
                         
                         // CRITICAL: We must ALWAYS execute and return the result of the original engine function (func).
                         // Bypassing 'func' or returning nullptr causes register corruption (RAX holding garbage)
@@ -220,12 +229,22 @@ namespace Hook {
             SKSE::log::info("Hooked UpdateCombat (VTable[0xE4])");
         }
 
+        static void Reset() {
+            std::lock_guard<std::mutex> lock(_updateMutex);
+            _lastUpdateMap.clear();
+            _actorHealthMap.clear();
+        }
+
     private:
         static void UpdateCombat(RE::Actor* a_this) {
             _UpdateCombat(a_this);
 
             if (!a_this || a_this->IsDead()) {
-                if (a_this) Threat::ThreatManager::GetSingleton()->ClearHate(a_this->GetFormID());
+                if (a_this) {
+                    auto* threat = Threat::ThreatManager::GetSingleton();
+                    threat->ClearHate(a_this->GetFormID());
+                    threat->ClearFocus(a_this->GetFormID());
+                }
                 return;
             }
 
@@ -339,5 +358,12 @@ namespace Hook {
             SKSE::log::info("Registered TESCombatEvent Sink");
             SKSE::log::info("Registered TESDeathEvent Sink");
         }
+    }
+
+    void ResetRuntimeState() {
+        Threat::ThreatManager::GetSingleton()->Reset();
+        HitTracker::GetSingleton()->Reset();
+        ActorHook::Reset();
+        SKSE::log::info("Reset threat/focus runtime state");
     }
 }

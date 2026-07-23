@@ -12,10 +12,16 @@ void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
 	case SKSE::MessagingInterface::kPostLoad:
 		break;
 	case SKSE::MessagingInterface::kPreLoadGame:
+		// Clear in-memory hate/focus before actors are restored from the save.
+		// Stale focus across death+reload can permanently suppress player detection.
+		Hook::ResetRuntimeState();
 		break;
 	case SKSE::MessagingInterface::kPostLoadGame:
+		// Belt-and-suspenders: ensure no mid-load leftovers remain.
+		Hook::ResetRuntimeState();
 		break;
 	case SKSE::MessagingInterface::kNewGame:
+		Hook::ResetRuntimeState();
 		break;
 	}
 }

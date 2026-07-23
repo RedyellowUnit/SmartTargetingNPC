@@ -28,6 +28,7 @@ namespace Threat {
         
         void ApplyDecay(RE::FormID a_targetID, float a_deltaTime);
         void ClearHate(RE::FormID a_targetID);
+        void Reset();
 
         void ProcessDamage(RE::FormID a_targetID, RE::FormID a_attackerID, float a_damage, float a_distance);
         void ProcessBash(RE::FormID a_targetID, RE::FormID a_attackerID, float a_distance);

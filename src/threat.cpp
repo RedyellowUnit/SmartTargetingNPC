@@ -51,6 +51,17 @@ namespace Threat {
         _hateTable.erase(a_targetID);
     }
 
+    void ThreatManager::Reset() {
+        {
+            std::unique_lock<std::shared_mutex> lock(_hateMutex);
+            _hateTable.clear();
+        }
+        {
+            std::unique_lock<std::shared_mutex> lock(_focusMutex);
+            _focusMap.clear();
+        }
+    }
+
     RE::Actor* ThreatManager::EvaluateBestTarget(RE::Actor* a_observer, RE::Actor* a_currentTarget, const std::vector<TargetCandidate>& a_candidates) {
         if (a_candidates.empty()) {
             ClearFocus(a_observer->GetFormID());
