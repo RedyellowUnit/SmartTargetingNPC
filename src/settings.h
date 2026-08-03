@@ -1,5 +1,10 @@
 #pragma once
 #include <SimpleIni.h>
+#include <cctype>
+#include <string>
+#include <unordered_set>
+#include "util.h"
+#include "RE/A/Actor.h"
 
 class Settings {
 public:
@@ -30,8 +35,63 @@ public:
         midRange = (float)ini.GetDoubleValue("Range", "fMidRange", 2000.0);
         forceDetectRange = (float)ini.GetDoubleValue("Range", "fForceDetectRange", 3000.0);
 
-        // Save back defaults if file missing
+        // [Exclusions] — actor base / race FormIDs excluded from hate management
+        // Miraak (Dragonborn): hostile to dragons in the final fight; fDragonBonus breaks that encounter.
+        // Accepts FormID~Plugin.esm or EditorID (comma-separated).
+        constexpr const char* kDefaultExcludedObservers =
+            "DLC2MiraakMQ01,DLC2MiraakMQ02,DLC2Miraak,DLC2MiraakMQ04,"
+            "DLC2MiraakMQ06,DLC2MiraakSoulSteal,DLC2MiraakRace";
+
+        const char* rawExclusions = ini.GetValue("Exclusions", "sExcludedObservers", nullptr);
+        if (!rawExclusions) {
+            ini.SetValue("Exclusions", "sExcludedObservers", kDefaultExcludedObservers);
+            rawExclusions = kDefaultExcludedObservers;
+        }
+
+        excludedForms.clear();
+        for (const auto& token : Util::String::Split(rawExclusions, ","sv)) {
+            auto trimmed = Trim(token);
+            if (trimmed.empty()) continue;
+
+            RE::FormID formID = 0;
+            if (trimmed.find('~') == std::string::npos) {
+                if (auto* form = RE::TESForm::LookupByEditorID(trimmed)) {
+                    formID = form->GetFormID();
+                }
+            } else {
+                formID = FormUtil::Parse::GetFormIDFromConfigString(trimmed);
+            }
+
+            if (formID == static_cast<RE::FormID>(-1) || formID == 0) {
+                SKSE::log::warn("Failed to resolve excluded form: {}", trimmed);
+                continue;
+            }
+            excludedForms.insert(formID);
+            SKSE::log::info("Excluded form {:X} ({})", formID, trimmed);
+        }
+
+        // Save back defaults if file missing / keys were added
         ini.SaveFile(path);
+    }
+
+    bool IsObserverExcluded(RE::Actor* a_actor) const {
+        if (!a_actor || excludedForms.empty()) {
+            return false;
+        }
+
+        if (auto* base = a_actor->GetActorBase()) {
+            if (excludedForms.contains(base->GetFormID())) {
+                return true;
+            }
+        }
+
+        if (auto* race = a_actor->GetRace()) {
+            if (excludedForms.contains(race->GetFormID())) {
+                return true;
+            }
+        }
+
+        return excludedForms.contains(a_actor->GetFormID());
     }
 
     // Hate
@@ -54,4 +114,16 @@ public:
 private:
     Settings() = default;
     const char* path = "Data\\SKSE\\Plugins\\SmartTargetingNPC.ini";
+
+    std::unordered_set<RE::FormID> excludedForms;
+
+    static std::string Trim(std::string_view a_str) {
+        while (!a_str.empty() && std::isspace(static_cast<unsigned char>(a_str.front()))) {
+            a_str.remove_prefix(1);
+        }
+        while (!a_str.empty() && std::isspace(static_cast<unsigned char>(a_str.back()))) {
+            a_str.remove_suffix(1);
+        }
+        return std::string(a_str);
+    }
 };

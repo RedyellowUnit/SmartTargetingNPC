@@ -173,62 +173,69 @@ namespace Hook {
             std::int32_t& a_detectionValue, std::uint8_t& a_unk04, std::uint8_t& a_unk05,
             std::uint32_t& a_unk06, RE::NiPoint3& a_pos, float& a_unk08, float& a_unk09, float& a_unk10)
         {
-            if (a_source && a_target) {
-                RE::FormID focus = Threat::ThreatManager::GetSingleton()->GetFocus(a_source->GetFormID());
-                if (focus != 0) {
-                    if (a_target->GetFormID() == focus) {
-                        // Priority Target: Force-detect the actor to keep the NPC focused on high-threat targets.
-                        // Never force-detect a dead/deleted focus — that can pin combat AI to a corpse.
-                        if (a_target->IsDead() || a_target->IsDeleted()) {
-                            Threat::ThreatManager::GetSingleton()->ClearFocus(a_source->GetFormID());
-                            return func(a_source, a_target, a_detectionValue, a_unk04, a_unk05, a_unk06, a_pos, a_unk08, a_unk09, a_unk10);
-                        }
+            // CRITICAL: Always call and return the original engine function (func).
+            // Bypassing 'func' or returning nullptr causes register corruption (RAX holding garbage)
+            // leading to physics/Havok CTDs during high-frequency hit events.
+            // Call once, then adjust a_detectionValue in-place — never re-call func on a_target
+            // after suppression, or the engine overwrites -1000 / 1000.
+            auto result = func(a_source, a_target, a_detectionValue, a_unk04, a_unk05, a_unk06, a_pos, a_unk08, a_unk09, a_unk10);
 
-                        auto result = func(a_source, a_target, a_detectionValue, a_unk04, a_unk05, a_unk06, a_pos, a_unk08, a_unk09, a_unk10);
-                        float dist = a_source->GetPosition().GetDistance(a_target->GetPosition());
-                        
-                        if (dist < Settings::GetSingleton()->forceDetectRange && a_detectionValue > 0) {
-                            a_detectionValue = 1000;
-                        }
-                        return result;
-                    } else {
-                        // Non-Focus Target: Suppress detection if the current primary focus is still at a distance.
-                        // This prevents the NPC from being easily distracted by closer, lower-threat enemies.
-                        // Stale/invalid focus (e.g. after death+reload) must not suppress detection.
-                        auto focusActor = RE::TESForm::LookupByID<RE::Actor>(focus);
-                        if (!focusActor || focusActor->IsDead() || focusActor->IsDeleted()) {
-                            Threat::ThreatManager::GetSingleton()->ClearFocus(a_source->GetFormID());
-                            return func(a_source, a_target, a_detectionValue, a_unk04, a_unk05, a_unk06, a_pos, a_unk08, a_unk09, a_unk10);
-                        }
-
-                        float focusDist = a_source->GetPosition().GetDistance(focusActor->GetPosition());
-                        
-                        // CRITICAL: We must ALWAYS execute and return the result of the original engine function (func).
-                        // Bypassing 'func' or returning nullptr causes register corruption (RAX holding garbage)
-                        // leading to physics/Havok CTDs during high-frequency hit events.
-                        auto result = func(a_source, a_target, a_detectionValue, a_unk04, a_unk05, a_unk06, a_pos, a_unk08, a_unk09, a_unk10);
-
-                        // Only suppress alternatives when the focus is actually detected
-                        // (pre-hook detection > 0). If focus is undetected/stealthed
-                        // (detection <= 0), suppressing others causes standstill.
-                        std::int32_t focusDetection = 0;
-                        std::uint8_t focusUnk04 = 0;
-                        std::uint8_t focusUnk05 = 0;
-                        std::uint32_t focusUnk06 = 0;
-                        RE::NiPoint3 focusPos;
-                        float focusUnk08 = 0.0f;
-                        float focusUnk09 = 0.0f;
-                        float focusUnk10 = 0.0f;
-                        func(a_source, focusActor, focusDetection, focusUnk04, focusUnk05, focusUnk06, focusPos, focusUnk08, focusUnk09, focusUnk10);
-
-                        if (focusDetection > 0) {
-                            a_detectionValue = -1000;
-                        }
-                        return result;
-                    }
-                }
+            if (!a_source || !a_target) {
+                return result;
             }
-            return func(a_source, a_target, a_detectionValue, a_unk04, a_unk05, a_unk06, a_pos, a_unk08, a_unk09, a_unk10);
+
+            // Do nothing when observer is excluded.
+            if (Settings::GetSingleton()->IsObserverExcluded(a_source)) {
+                //SKSE::log::info(FMT_STRING("[Exclude] {} "), a_source->GetDisplayFullName());
+                return result;
+            }
+
+            RE::FormID focus = Threat::ThreatManager::GetSingleton()->GetFocus(a_source->GetFormID());
+            if (focus == 0) {
+                return result;
+            }
+
+            if (a_target->GetFormID() == focus) {
+                // Priority Target: Force-detect the actor to keep the NPC focused on high-threat targets.
+                // Never force-detect a dead/deleted focus — that can pin combat AI to a corpse.
+                if (a_target->IsDead() || a_target->IsDeleted()) {
+                    Threat::ThreatManager::GetSingleton()->ClearFocus(a_source->GetFormID());
+                    return result;
+                }
+
+                float dist = a_source->GetPosition().GetDistance(a_target->GetPosition());
+                if (dist < Settings::GetSingleton()->forceDetectRange && a_detectionValue > 0) {
+                    a_detectionValue = 1000;
+                }
+                return result;
+            }
+
+            // Non-Focus Target: Suppress detection while primary focus is still detected.
+            // This prevents the NPC from being easily distracted by closer, lower-threat enemies.
+            // Stale/invalid focus (e.g. after death+reload) must not suppress detection.
+            auto focusActor = RE::TESForm::LookupByID<RE::Actor>(focus);
+            if (!focusActor || focusActor->IsDead() || focusActor->IsDeleted()) {
+                Threat::ThreatManager::GetSingleton()->ClearFocus(a_source->GetFormID());
+                return result;
+            }
+
+            // Only suppress alternatives when the focus is actually detected
+            // (pre-hook detection > 0). If focus is undetected/stealthed
+            // (detection <= 0), suppressing others causes standstill.
+            std::int32_t focusDetection = 0;
+            std::uint8_t focusUnk04 = 0;
+            std::uint8_t focusUnk05 = 0;
+            std::uint32_t focusUnk06 = 0;
+            RE::NiPoint3 focusPos;
+            float focusUnk08 = 0.0f;
+            float focusUnk09 = 0.0f;
+            float focusUnk10 = 0.0f;
+            func(a_source, focusActor, focusDetection, focusUnk04, focusUnk05, focusUnk06, focusPos, focusUnk08, focusUnk09, focusUnk10);
+
+            if (focusDetection > 0) {
+                a_detectionValue = -1000;
+            }
+            return result;
         }
 
         static inline REL::Relocation<decltype(thunk)> func;
@@ -269,6 +276,13 @@ namespace Hook {
                     threat->ClearHate(a_this->GetFormID());
                     threat->ClearFocus(a_this->GetFormID());
                 }
+                return;
+            }
+
+            // Do nothing when observer is excluded.
+            if (Settings::GetSingleton()->IsObserverExcluded(a_this))
+            {
+                //SKSE::log::info(FMT_STRING("[Exclude] {} "), a_this->GetDisplayFullName());
                 return;
             }
 
@@ -351,7 +365,7 @@ namespace Hook {
                 RE::BSReadLockGuard lock(combatGroup->lock);
                 for (auto& combatTarget : combatGroup->targets) {
                     auto target = combatTarget.targetHandle.get();
-                    if (!target || target->IsDead()) continue;
+                    if (!target || target->IsDead() || target->IsDeleted()) continue;
                     float dist = a_this->GetPosition().GetDistance(target->GetPosition());
                     candidates.push_back({ target, dist });
                 }
