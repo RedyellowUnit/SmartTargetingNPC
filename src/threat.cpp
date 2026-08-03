@@ -51,6 +51,13 @@ namespace Threat {
         _hateTable.erase(a_targetID);
     }
 
+    void ThreatManager::ClearHateToward(RE::FormID a_deadID) {
+        std::unique_lock<std::shared_mutex> lock(_hateMutex);
+        for (auto& entry : _hateTable) {
+            entry.second.erase(a_deadID);
+        }
+    }
+
     void ThreatManager::Reset() {
         {
             std::unique_lock<std::shared_mutex> lock(_hateMutex);
@@ -60,6 +67,13 @@ namespace Threat {
             std::unique_lock<std::shared_mutex> lock(_focusMutex);
             _focusMap.clear();
         }
+    }
+
+    void ThreatManager::ProcessTargetDeath(RE::FormID a_deadID) {
+        ClearFocusOnTarget(a_deadID);
+        ClearHateToward(a_deadID);
+        ClearHate(a_deadID);
+        ClearFocus(a_deadID);
     }
 
     RE::Actor* ThreatManager::EvaluateBestTarget(RE::Actor* a_observer, RE::Actor* a_currentTarget, const std::vector<TargetCandidate>& a_candidates) {
@@ -81,6 +95,11 @@ namespace Threat {
         }
 
         RE::FormID observerID = a_observer->GetFormID();
+
+        // Dead/deleted current targets must not keep focus or block retargeting via leftover hate.
+        if (a_currentTarget && (a_currentTarget->IsDead() || a_currentTarget->IsDeleted())) {
+            a_currentTarget = nullptr;
+        }
 
         // Identify the closest candidate to ensure proximity-based priority for new or low-hate actors.
         RE::Actor* closestCandidate = nullptr;
@@ -186,11 +205,11 @@ namespace Threat {
                 (currentHate > 0 && hateDiff / currentHate > Settings::GetSingleton()->switchThreshold)) {
                 SetFocus(observerID, bestTarget->GetFormID());
                 
-                SKSE::log::info(FMT_STRING("[TargetSwitch] {} --> {}) (Hate={:.1f}, Dist={:.1f})"),
+                /*SKSE::log::info(FMT_STRING("[TargetSwitch] {} --> {}) (Hate={:.1f}, Dist={:.1f})"),
                     a_observer->GetDisplayFullName(), 
                     bestTarget->GetDisplayFullName(),
                     bestHate, 
-                    a_observer->GetPosition().GetDistance(bestTarget->GetPosition()));
+                    a_observer->GetPosition().GetDistance(bestTarget->GetPosition()));*/
 
                 return bestTarget;
             }
@@ -220,6 +239,17 @@ namespace Threat {
     void ThreatManager::ClearFocus(RE::FormID a_observerID) {
         std::unique_lock<std::shared_mutex> lock(_focusMutex);
         _focusMap.erase(a_observerID);
+    }
+
+    void ThreatManager::ClearFocusOnTarget(RE::FormID a_deadID) {
+        std::unique_lock<std::shared_mutex> lock(_focusMutex);
+        for (auto it = _focusMap.begin(); it != _focusMap.end();) {
+            if (it->second == a_deadID) {
+                it = _focusMap.erase(it);
+            } else {
+                ++it;
+            }
+        }
     }
 
     void ThreatManager::ProcessDamage(RE::FormID a_targetID, RE::FormID a_attackerID, float a_damage, float a_distance) {

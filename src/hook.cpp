@@ -138,6 +138,10 @@ namespace Hook {
             if (a_event && a_event->actorDying) {
                 auto victim = a_event->actorDying->As<RE::Actor>();
                 if (victim) {
+                    auto* threat = Threat::ThreatManager::GetSingleton();
+                    // Drop any focus/hate pinned to the corpse before death-aggro retargeting.
+                    threat->ProcessTargetDeath(victim->GetFormID());
+
                     // Try to find the actual physical killer via HitTracker (last attacker within 5s)
                     RE::FormID killerID = HitTracker::GetSingleton()->GetLastAttacker(victim->GetFormID());
                     RE::Actor* killer = nullptr;
@@ -152,7 +156,7 @@ namespace Hook {
                     }
 
                     if (killer) {
-                        Threat::ThreatManager::GetSingleton()->ProcessDeathAggro(victim, killer);
+                        threat->ProcessDeathAggro(victim, killer);
                     }
                 }
             }
@@ -174,6 +178,12 @@ namespace Hook {
                 if (focus != 0) {
                     if (a_target->GetFormID() == focus) {
                         // Priority Target: Force-detect the actor to keep the NPC focused on high-threat targets.
+                        // Never force-detect a dead/deleted focus — that can pin combat AI to a corpse.
+                        if (a_target->IsDead() || a_target->IsDeleted()) {
+                            Threat::ThreatManager::GetSingleton()->ClearFocus(a_source->GetFormID());
+                            return func(a_source, a_target, a_detectionValue, a_unk04, a_unk05, a_unk06, a_pos, a_unk08, a_unk09, a_unk10);
+                        }
+
                         auto result = func(a_source, a_target, a_detectionValue, a_unk04, a_unk05, a_unk06, a_pos, a_unk08, a_unk09, a_unk10);
                         float dist = a_source->GetPosition().GetDistance(a_target->GetPosition());
                         
@@ -347,7 +357,9 @@ namespace Hook {
                 }
             }
 
-            auto bestTarget = Threat::ThreatManager::GetSingleton()->EvaluateBestTarget(a_this, currentTarget.get(), candidates);
+            // Pass nullptr for a dead/deleted current target so leftover hate cannot block retarget.
+            RE::Actor* effectiveCurrent = currentTargetInvalid ? nullptr : currentTarget.get();
+            auto bestTarget = Threat::ThreatManager::GetSingleton()->EvaluateBestTarget(a_this, effectiveCurrent, candidates);
 
             if (bestTarget && bestTarget != currentTarget.get()) {
                 runtimeData.currentCombatTarget = bestTarget->GetHandle();
@@ -356,6 +368,14 @@ namespace Hook {
                     runtimeData.combatController->targetHandle = bestTarget->GetHandle();
                     runtimeData.combatController->previousTargetHandle = currentTargetInvalid ? RE::ActorHandle() : currentTarget->GetHandle();
                 }
+            } else if (!bestTarget && currentTargetInvalid) {
+                // No living alternative: release the corpse handle so AI is not pinned to it.
+                runtimeData.currentCombatTarget = RE::ActorHandle();
+                if (runtimeData.combatController) {
+                    runtimeData.combatController->previousTargetHandle = runtimeData.combatController->targetHandle;
+                    runtimeData.combatController->targetHandle = RE::ActorHandle();
+                }
+                Threat::ThreatManager::GetSingleton()->ClearFocus(victimID);
             }
         }
 
