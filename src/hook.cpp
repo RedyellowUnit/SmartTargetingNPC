@@ -198,23 +198,21 @@ namespace Hook {
                         // leading to physics/Havok CTDs during high-frequency hit events.
                         auto result = func(a_source, a_target, a_detectionValue, a_unk04, a_unk05, a_unk06, a_pos, a_unk08, a_unk09, a_unk10);
 
-                        // Only suppress alternatives when the focus is actually detected.
-                        // If focus is undetected/stealthed (detection <= 0), suppressing others causes
-                        // standstill: in combat with an unseen focus and no valid alternative targets.
-                        if (focusDist > Settings::GetSingleton()->nearRange) {
-                            std::int32_t focusDetection = 0;
-                            std::uint8_t focusUnk04 = 0;
-                            std::uint8_t focusUnk05 = 0;
-                            std::uint32_t focusUnk06 = 0;
-                            RE::NiPoint3 focusPos;
-                            float focusUnk08 = 0.0f;
-                            float focusUnk09 = 0.0f;
-                            float focusUnk10 = 0.0f;
-                            func(a_source, focusActor, focusDetection, focusUnk04, focusUnk05, focusUnk06, focusPos, focusUnk08, focusUnk09, focusUnk10);
+                        // Only suppress alternatives when the focus is actually detected
+                        // (pre-hook detection > 0). If focus is undetected/stealthed
+                        // (detection <= 0), suppressing others causes standstill.
+                        std::int32_t focusDetection = 0;
+                        std::uint8_t focusUnk04 = 0;
+                        std::uint8_t focusUnk05 = 0;
+                        std::uint32_t focusUnk06 = 0;
+                        RE::NiPoint3 focusPos;
+                        float focusUnk08 = 0.0f;
+                        float focusUnk09 = 0.0f;
+                        float focusUnk10 = 0.0f;
+                        func(a_source, focusActor, focusDetection, focusUnk04, focusUnk05, focusUnk06, focusPos, focusUnk08, focusUnk09, focusUnk10);
 
-                            if (focusDetection > 0) {
-                                a_detectionValue = -1000;
-                            }
+                        if (focusDetection > 0) {
+                            a_detectionValue = -1000;
                         }
                         return result;
                     }
@@ -329,6 +327,14 @@ namespace Hook {
                 Threat::ThreatManager::GetSingleton()->ClearFocus(victimID);
                 return;
             }
+
+            const bool currentTargetInvalid = currentTarget->IsDead() || currentTarget->IsDeleted();
+
+            // Switch the combat target mid-swing makes the hit resolve against the previous target (or fail entirely),
+            // which looks like ghost-immunity and missing hit sounds.
+            if (!currentTargetInvalid && a_this->IsAttacking()) {
+                return;
+            }
             
             std::vector<Threat::TargetCandidate> candidates;
             {
@@ -348,7 +354,7 @@ namespace Hook {
                 
                 if (runtimeData.combatController) {
                     runtimeData.combatController->targetHandle = bestTarget->GetHandle();
-                    runtimeData.combatController->previousTargetHandle = currentTarget ? currentTarget->GetHandle() : RE::ActorHandle();
+                    runtimeData.combatController->previousTargetHandle = currentTargetInvalid ? RE::ActorHandle() : currentTarget->GetHandle();
                 }
             }
         }

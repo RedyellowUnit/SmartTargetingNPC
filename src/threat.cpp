@@ -172,30 +172,38 @@ namespace Threat {
         }
 
         // Logic to determine if a target switch is necessary based on hate accumulation thresholds.
-        if (bestTarget && bestTarget != a_currentTarget) {
+        // No valid current target (including after rejecting a corpse): always accept the best living candidate.
+        // Also switch when the current target's effective hate was discounted to zero (undetected summoner).
+        if (!bestTarget) {
+            ClearFocus(observerID);
+            return nullptr;
+        }
+        else if (bestTarget != a_currentTarget) {
             float hateDiff = bestHate - currentHate;
-            if (hateDiff > 0.1f || (currentHate > 0 && hateDiff / currentHate > Settings::GetSingleton()->switchThreshold)) {
+            if (!a_currentTarget ||
+                (currentHate <= 0.0f && bestHate > 0.0f) ||
+                hateDiff > 0.1f ||
+                (currentHate > 0 && hateDiff / currentHate > Settings::GetSingleton()->switchThreshold)) {
                 SetFocus(observerID, bestTarget->GetFormID());
                 
-                /*SKSE::log::info(FMT_STRING("[TargetSwitch] {:X} ({}) switched target to {:X} ({}) (Hate={:.1f}, Dist={:.1f})"),
-                    observerID, a_observer->GetDisplayFullName(), 
-                    bestTarget->GetFormID(), bestTarget->GetDisplayFullName(),
-                    bestHate, a_observer->GetPosition().GetDistance(bestTarget->GetPosition()));*/
+                SKSE::log::info(FMT_STRING("[TargetSwitch] {} --> {}) (Hate={:.1f}, Dist={:.1f})"),
+                    a_observer->GetDisplayFullName(), 
+                    bestTarget->GetDisplayFullName(),
+                    bestHate, 
+                    a_observer->GetPosition().GetDistance(bestTarget->GetPosition()));
 
                 return bestTarget;
             }
         }
 
-        if (a_currentTarget) {
-            SetFocus(observerID, a_currentTarget->GetFormID());
-            return a_currentTarget;
-        } else if (bestTarget) {
-            SetFocus(observerID, bestTarget->GetFormID());
-            return bestTarget;
-        }
+        SetFocus(observerID, a_currentTarget->GetFormID());
+        /*SKSE::log::info(FMT_STRING("[CurrentTarget] {} --> {} (Hate={:.1f})"), 
+            a_observer->GetDisplayFullName(),
+            a_currentTarget->GetDisplayFullName(),
+            currentHate);*/
+        return a_currentTarget;
 
-        ClearFocus(observerID);
-        return nullptr;
+        
     }
 
     RE::FormID ThreatManager::GetFocus(RE::FormID a_observerID) {
